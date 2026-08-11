@@ -1,0 +1,52 @@
+# dependencies
+node_modules
+/.pnp
+.pnp.js
+
+# next.js
+/.next/
+/out/
+/build
+next-env.d.ts
+*.tsbuildinfo
+.swc/
+
+# testing
+/coverage
+
+# environment — every variant. Never commit a populated env file.
+.env
+.env.*
+!.env.example
+*.env
+.env.local
+.env.netlify
+.env.production
+.env.development.local
+.env.test.local
+.env.production.local
+
+# hosting
+.netlify/
+.vercel
+
+# editors / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# agent tooling
+.claude/worktrees/
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# certs
+*.pem

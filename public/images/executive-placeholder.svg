@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  Default avatar for executive-team entries that have no photo.
+  Deliberately generic: no crest, no wordmark, no sport, nothing that
+  identifies an organisation. Drawn as vector geometry rather than an
+  embedded raster so what ships is exactly what you can read here.
+  Bust is bottom-anchored because the call site crops it into a circle
+  aligned to the bottom edge (app/about/executive-team-section.tsx).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Placeholder portrait">
+  <title>Placeholder portrait</title>
+  <g fill="#9ca3af">
+    <rect x="442" y="500" width="140" height="180" rx="46"/>
+    <circle cx="512" cy="372" r="180"/>
+    <path d="M176 1024V920a336 336 0 0 1 672 0v104Z"/>
+  </g>
+</svg>

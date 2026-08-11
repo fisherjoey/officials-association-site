@@ -1,0 +1,30 @@
+name: Build with no Supabase env
+
+# Guards the "adopter's first command" path: this repo must produce a
+# working static export even before anyone has configured Supabase.
+# See PLAT-35. If this job breaks, some route is constructing a Supabase
+# client (or doing other env-dependent work) at module-evaluation or
+# prerender time instead of deferring it to request time.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-no-env:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build with no Supabase env configured
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ""
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ""
+        run: npm run build

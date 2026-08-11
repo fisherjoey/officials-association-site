@@ -1,0 +1,79 @@
+<!-- Invitation Email Template -->
+<!-- CONFIGURATION: Update organization details below -->
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+  <tr>
+    <td style="padding: 20px 10px;">
+      <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; width: 100%; margin: 0 auto; background-color: #ffffff;" align="center">
+
+        <!-- Header -->
+        <tr>
+          <td style="background-color: #1f2937; padding: 24px 20px; border-bottom: 3px solid #F97316; text-align: center;">
+            <!-- Logo is served from this site's own /images/logos directory; no third-party host -->
+            <img src="{{ .SiteURL }}/images/logos/org-logo.png" alt="Organization Logo" style="max-width: 70px; height: auto; display: inline-block; margin-bottom: 12px;">
+            <!-- TODO: Replace with your organization name -->
+            <h1 style="color: #ffffff; margin: 0 0 4px 0; font-size: 18px; font-weight: 700; letter-spacing: -0.5px; line-height: 1.3;">{{ .OrganizationName }}</h1>
+            <!-- TODO: Replace with your organization tagline -->
+            <p style="color: #ffffff; margin: 0; font-size: 14px; font-weight: 500; opacity: 0.95;">{{ .OrganizationTagline }}</p>
+          </td>
+        </tr>
+
+        <!-- Main Content -->
+        <tr>
+          <td style="padding: 30px 20px; color: #333333; font-size: 16px; line-height: 1.6;">
+            <h1 style="color: #003DA5; font-size: 24px; margin-top: 0; margin-bottom: 16px; font-weight: 700; line-height: 1.3;">You're Invited to Join Us!</h1>
+
+            <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6;">You have been invited to create an account on the <strong style="color: #003DA5; font-weight: 600;">{{ .OrganizationName }}</strong> member portal.</p>
+
+            <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6;">As a member, you'll have access to:</p>
+
+            <ul style="margin: 0 0 16px 0; padding-left: 20px;">
+              <li style="margin-bottom: 8px; font-size: 16px; line-height: 1.5;"><strong style="color: #003DA5;">Resources</strong> - Training materials, rulebooks, and guides</li>
+              <li style="margin-bottom: 8px; font-size: 16px; line-height: 1.5;"><strong style="color: #003DA5;">Newsletter</strong> - Our official newsletter</li>
+              <li style="margin-bottom: 8px; font-size: 16px; line-height: 1.5;"><strong style="color: #003DA5;">Calendar</strong> - Upcoming events and training sessions</li>
+              <li style="margin-bottom: 8px; font-size: 16px; line-height: 1.5;"><strong style="color: #003DA5;">Rule Modifications</strong> - League-specific rule changes</li>
+            </ul>
+
+            <p style="text-align: center; margin: 24px 0;">
+              <a href="{{ .SiteURL }}/portal/#invite_token={{ .Token }}" style="display: inline-block; padding: 14px 28px; min-height: 44px; background-color: #F97316; color: #ffffff !important; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">Accept Invitation</a>
+            </p>
+
+            <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6;">If you have any questions about your membership, please don't hesitate to contact us.</p>
+
+            <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6;">We look forward to having you on our team!</p>
+
+            <p style="margin: 0; font-size: 16px; line-height: 1.6;">Best regards,<br>
+            <strong style="color: #003DA5; font-weight: 600;">{{ .OrganizationName }} Executive Board</strong></p>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background-color: #1F2937; color: #D1D5DB; padding: 30px 20px; text-align: center; font-size: 14px; line-height: 1.7; border-top: 3px solid #F97316;">
+            <!-- TODO: Replace with your organization name and location -->
+            <p style="margin: 0 0 10px 0; font-weight: 600; color: #ffffff;">{{ .OrganizationName }}</p>
+            <p style="margin: 0 0 15px 0;">{{ .OrganizationLocation }}</p>
+
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 20px auto;">
+              <tr>
+                <td style="padding: 0 8px;">
+                  <a href="{{ .SiteURL }}" style="color: #F97316; text-decoration: none; font-size: 14px;">Website</a>
+                </td>
+                <td style="padding: 0 8px;">
+                  <a href="{{ .SiteURL }}/portal" style="color: #F97316; text-decoration: none; font-size: 14px;">Member Portal</a>
+                </td>
+                <td style="padding: 0 8px;">
+                  <a href="{{ .SiteURL }}/contact" style="color: #F97316; text-decoration: none; font-size: 14px;">Contact Us</a>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin: 20px 0 0 0; font-size: 13px; color: #9ca3af;">
+              &copy; {{ .Year }} {{ .OrganizationName }}. All rights reserved.
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>

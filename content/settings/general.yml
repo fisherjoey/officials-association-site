@@ -1,0 +1,26 @@
+siteTitle: Example Basketball Officials Association
+siteDescription: A regional basketball officiating organization providing
+  trained and certified referees for all levels of basketball competition.
+statistics:
+  activeOfficials: 250+
+  gamesPerSeason: 5,000+
+  yearsOfService: "60+"
+executiveTeam:
+  - name: Example President
+    position: President
+    email: president@example.org
+    image: /images/executive-placeholder.svg
+  - name: Example Vice President
+    position: Vice President
+    email: vicepresident@example.org
+  - name: Example Treasurer
+    position: Treasurer
+    email: treasurer@example.org
+socialMedia:
+  facebook: ""
+  twitter: ""
+  instagram: ""
+  youtube: ""
+contact:
+  email: info@example.org
+  address: Example City, Example Province, Canada

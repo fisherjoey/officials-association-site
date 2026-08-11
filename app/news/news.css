@@ -1,0 +1,133 @@
+/* News Article Styles */
+
+.article-content {
+  font-size: 1.125rem;
+  line-height: 1.75;
+  color: #374151;
+}
+
+.article-content p {
+  margin-bottom: 1.5rem;
+}
+
+.article-content h1 {
+  color: #003DA5;
+  font-size: 2.5rem;
+  font-weight: bold;
+  margin-top: 0;
+  margin-bottom: 2rem;
+}
+
+.article-content h2 {
+  color: #003DA5;
+  font-size: 1.875rem;
+  font-weight: bold;
+  margin-top: 3rem;
+  margin-bottom: 1.5rem;
+  padding-top: 0.5rem;
+}
+
+.article-content h3 {
+  color: #003DA5;
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+
+.article-content h4 {
+  color: #003DA5;
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.article-content ul,
+.article-content ol {
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding-left: 1.5rem;
+}
+
+.article-content li {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.article-content li > ul,
+.article-content li > ol {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.article-content blockquote {
+  border-left: 4px solid #F97316;
+  background-color: #FFF7ED;
+  padding: 1rem 1.5rem;
+  margin: 2rem 0;
+  font-style: italic;
+}
+
+.article-content blockquote p {
+  margin-bottom: 0;
+}
+
+.article-content table {
+  width: 100%;
+  margin: 2rem 0;
+  border-collapse: collapse;
+}
+
+.article-content th {
+  background-color: #003DA5;
+  color: white;
+  font-weight: 600;
+  padding: 0.75rem;
+  text-align: left;
+}
+
+.article-content td {
+  border: 1px solid #E5E7EB;
+  padding: 0.75rem;
+}
+
+.article-content hr {
+  border: none;
+  border-top: 1px solid #D1D5DB;
+  margin: 3rem 0;
+}
+
+.article-content strong {
+  color: #003DA5;
+  font-weight: 600;
+}
+
+.article-content em {
+  font-style: italic;
+}
+
+.article-content pre {
+  background-color: #F3F4F6;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  margin: 1.5rem 0;
+  overflow-x: auto;
+}
+
+.article-content code {
+  padding: 0.125rem 0.25rem;
+  background-color: #F3F4F6;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.article-content a {
+  color: #F97316;
+  text-decoration: underline;
+  transition: color 0.2s;
+}
+
+.article-content a:hover {
+  color: #003DA5;
+}

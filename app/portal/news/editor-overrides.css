@@ -1,0 +1,23 @@
+/* MDEditor toolbar button size overrides */
+.w-md-editor-toolbar {
+  height: 50px !important;
+  padding: 8px !important;
+}
+
+.w-md-editor-toolbar button {
+  font-size: 18px !important;
+  padding: 8px 12px !important;
+  height: 36px !important;
+  min-width: 36px !important;
+}
+
+.w-md-editor-toolbar svg {
+  width: 20px !important;
+  height: 20px !important;
+}
+
+.w-md-editor-toolbar li > button {
+  font-size: 16px !important;
+}
+
+/* All text formatting overrides removed to use vanilla editor defaults */

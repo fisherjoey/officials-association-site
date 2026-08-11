@@ -1,0 +1,36 @@
+[build]
+  # Integration tests run against real Supabase; they create + clean up
+  # tagged rows and a couple of throwaway auth users every deploy. Tests
+  # gate the build — failures fail the deploy.
+  command = "npm install && npm run test:integration && npm run build"
+  publish = ".next"
+
+[dev]
+  command = "npm run dev"
+  targetPort = 3000
+  autoLaunch = false
+
+[build.environment]
+  NODE_VERSION = "18"
+  NEXT_TELEMETRY_DISABLED = "1"
+  SECRETS_SCAN_OMIT_PATHS = ".next/**,.netlify/**,out/**,content/**,public/content/**,netlify/functions/**"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[functions]
+  directory = "netlify/functions"
+  included_files = ["public/documents/**"]
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
