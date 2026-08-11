@@ -84,7 +84,6 @@ export async function deleteTestUser(user: { id: string }): Promise<void> {
   const admin = getSupabaseAdmin()
   const { error } = await admin.auth.admin.deleteUser(user.id)
   if (error) {
-    // eslint-disable-next-line no-console
     console.warn('deleteTestUser failed:', error.message)
   }
 }

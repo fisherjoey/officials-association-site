@@ -21,7 +21,6 @@ export async function cleanupEmailHistoryRows(): Promise<void> {
     .delete()
     .like('subject', PATTERN)
   if (error) {
-    // eslint-disable-next-line no-console
     console.warn('cleanup email_history.subject failed:', error.message)
   }
 }
@@ -34,7 +33,6 @@ export async function cleanupAppLogsRows(): Promise<void> {
     .delete()
     .like('message', PATTERN)
   if (error) {
-    // eslint-disable-next-line no-console
     console.warn('cleanup app_logs.message failed:', error.message)
   }
 }
@@ -47,7 +45,6 @@ export async function cleanupAuditLogsRows(): Promise<void> {
     .delete()
     .like('description', PATTERN)
   if (error) {
-    // eslint-disable-next-line no-console
     console.warn('cleanup audit_logs.description failed:', error.message)
   }
 }

@@ -40,7 +40,6 @@ export async function cleanupOSARows(): Promise<void> {
     .delete()
     .like('organization_name', `${E2E_TAG}%`)
   if (error) {
-    // eslint-disable-next-line no-console
     console.warn('OSA cleanup failed:', error.message)
   }
 }
@@ -54,7 +53,6 @@ export async function cleanupContactRows(): Promise<void> {
     .delete()
     .like('subject', `%${E2E_TAG}%`)
   if (error) {
-    // eslint-disable-next-line no-console
     console.warn('contact_submissions cleanup failed:', error.message)
   }
 }
@@ -65,7 +63,6 @@ export async function cleanupLogsForCorrelation(correlationIds: string[]): Promi
   const sb = getSupabaseAdmin()
   const { error } = await sb.from('app_logs').delete().in('correlation_id', correlationIds)
   if (error) {
-    // eslint-disable-next-line no-console
     console.warn('app_logs cleanup failed:', error.message)
   }
 }

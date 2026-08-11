@@ -376,7 +376,7 @@ export default function PublicResourcesAdmin() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">File Size (e.g., "2.5 MB")</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">File Size (e.g., &quot;2.5 MB&quot;)</label>
               <input
                 type="text"
                 value={newResource.file_size}

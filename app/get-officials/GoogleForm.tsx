@@ -30,7 +30,7 @@ export default function GoogleForm({
       <div className="mt-4 text-sm text-gray-600">
         <p>
           Please fill out the form above to request officials for your event.
-          We'll respond within 24-48 hours.
+          We&apos;ll respond within 24-48 hours.
         </p>
       </div>
     </div>
