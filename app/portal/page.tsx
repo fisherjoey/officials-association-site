@@ -1,5 +1,6 @@
 'use client'
 
+import React from 'react';
 import Link from 'next/link';
 import { useRole } from '@/contexts/RoleContext';
 import {
@@ -24,99 +25,43 @@ import UpcomingEventsWidget from '@/components/dashboard/UpcomingEventsWidget';
 import LatestAnnouncementWidget from '@/components/dashboard/LatestAnnouncementWidget';
 import LatestNewsletterWidget from '@/components/dashboard/LatestNewsletterWidget';
 import SchedulerUpdatesWidget from '@/components/dashboard/SchedulerUpdatesWidget';
-import { ORG_SHORT_NAME, NEWSLETTER_NAME, EXTERNAL_LINKS } from '@/lib/siteConfig'
+import { NEWSLETTER_NAME, EXTERNAL_LINKS, MODULES, isRouteEnabled } from '@/lib/siteConfig'
 
 export default function PortalDashboard() {
   const { user } = useRole();
 
-  // Define sections based on role
-  const officialSections = [
-    {
-      href: '/portal/profile',
-      title: 'My Profile',
-      description: 'View and update your personal information and activity history',
-      icon: IconUser,
-      badge: null
-    },
-    {
-      href: '/portal/resources',
-      title: 'Resources',
-      description: 'Access rulebooks, training materials, forms, and official documents',
-      icon: IconBooks,
-      badge: null
-    },
-    {
-      href: '/portal/news',
-      title: 'News & Announcements',
-      description: `Stay updated with the latest ${ORG_SHORT_NAME} news, events, and important announcements`,
-      icon: IconNews,
-      badge: null
-    },
-    {
-      href: '/portal/newsletter',
-      title: NEWSLETTER_NAME,
-      description: 'Read our monthly newsletter with in-depth articles and officiating insights',
-      icon: IconNotebook,
-      badge: null
-    },
-    {
-      href: '/portal/calendar',
-      title: 'Calendar',
-      description: 'View upcoming games, training sessions, and important dates',
-      icon: IconCalendar,
-      badge: null
-    },
-    {
-      href: '/portal/rule-modifications',
-      title: 'Rule Modifications',
-      description: `Review ${ORG_SHORT_NAME}-specific rule modifications and interpretations`,
-      icon: IconGavel,
-      badge: null
-    }
+  // Quick Links, as data rather than as a wall of near-identical <Link>s. The
+  // colours differ per tile and nothing else does, so a list is what this is.
+  const allQuickLinks: {
+    href: string
+    label: string
+    icon: React.ComponentType<{ className?: string }>
+    iconWrapClass: string
+    iconClass: string
+    staffOnly?: boolean
+    adminOnly?: boolean
+  }[] = [
+    { href: '/portal/profile', label: 'My Profile', icon: IconUser, iconWrapClass: 'bg-orange-50 dark:bg-portal-accent/10', iconClass: 'text-orange-600 dark:text-portal-accent' },
+    { href: '/portal/resources', label: 'Resources', icon: IconBooks, iconWrapClass: 'bg-blue-50 dark:bg-blue-500/[0.06]', iconClass: 'text-blue-600 dark:text-blue-300/60' },
+    { href: '/portal/news', label: 'News', icon: IconNews, iconWrapClass: 'bg-purple-50 dark:bg-purple-500/[0.06]', iconClass: 'text-purple-600 dark:text-purple-300/60' },
+    { href: '/portal/calendar', label: 'Calendar', icon: IconCalendar, iconWrapClass: 'bg-green-50 dark:bg-green-500/[0.06]', iconClass: 'text-green-600 dark:text-green-300/60' },
+    { href: '/portal/newsletter', label: NEWSLETTER_NAME, icon: IconNotebook, iconWrapClass: 'bg-amber-50 dark:bg-amber-500/[0.06]', iconClass: 'text-amber-600 dark:text-amber-300/60' },
+    { href: '/portal/rule-modifications', label: 'Rule Modifications', icon: IconGavel, iconWrapClass: 'bg-red-50 dark:bg-red-500/[0.06]', iconClass: 'text-red-600 dark:text-red-300/60' },
+    { href: '/portal/members', label: 'Members', icon: IconUsers, iconWrapClass: 'bg-indigo-50 dark:bg-indigo-500/[0.06]', iconClass: 'text-indigo-600 dark:text-indigo-300/60', staffOnly: true },
+    { href: '/portal/evaluations', label: 'Evaluations', icon: IconClipboard, iconWrapClass: 'bg-teal-50 dark:bg-teal-500/[0.06]', iconClass: 'text-teal-600 dark:text-teal-300/60', staffOnly: true },
+    { href: '/portal/admin', label: 'Portal Admin', icon: IconSettings, iconWrapClass: 'bg-slate-100 dark:bg-slate-700', iconClass: 'text-slate-600 dark:text-slate-400', adminOnly: true },
+    { href: '/portal/admin/logs', label: 'System Logs', icon: IconReportAnalytics, iconWrapClass: 'bg-slate-100 dark:bg-slate-700', iconClass: 'text-slate-600 dark:text-slate-400', adminOnly: true },
+    { href: '/portal/admin/email-history', label: 'Email History', icon: IconMail, iconWrapClass: 'bg-slate-100 dark:bg-slate-700', iconClass: 'text-slate-600 dark:text-slate-400', adminOnly: true },
   ];
 
-  const executiveSections = [
-    ...officialSections,
-    {
-      href: '/portal/members',
-      title: 'Members Directory',
-      description: 'Manage member profiles, track activities, and view member information',
-      icon: IconUsers,
-      badge: 'EXEC'
-    },
-    {
-      href: '/portal/evaluations',
-      title: 'Evaluations',
-      description: 'View and manage official evaluations and performance assessments',
-      icon: IconClipboard,
-      badge: 'EXEC'
-    }
-  ];
-
-  const adminSections = [
-    ...executiveSections,
-    {
-      href: '/portal/admin',
-      title: 'Portal Admin',
-      description: 'Manage public website content and system settings',
-      icon: IconSettings,
-      badge: 'ADMIN'
-    },
-    {
-      href: '/portal/admin/logs',
-      title: 'System Logs',
-      description: 'View application logs and audit trail',
-      icon: IconReportAnalytics,
-      badge: 'ADMIN'
-    }
-  ];
-
-  // Select sections based on role
-  const sections = user.role === 'admin' 
-    ? adminSections 
-    : user.role === 'executive' 
-      ? executiveSections 
-      : officialSections;
+  // Two filters, and they answer different questions. Role decides who is
+  // allowed to see a link; isRouteEnabled decides whether the page behind it
+  // was built at all. A disabled module is absent from the static export, so a
+  // surviving link would be a silent 404 for everyone including admins.
+  const quickLinks = allQuickLinks
+    .filter(link => (link.adminOnly ? user.role === 'admin' : true))
+    .filter(link => (link.staffOnly ? user.role !== 'official' : true))
+    .filter(link => isRouteEnabled(link.href));
 
   return (
     <div className="space-y-4">
@@ -149,125 +94,30 @@ export default function PortalDashboard() {
         {/* Upcoming Events stacked with Scheduler Updates beneath */}
         <div className="space-y-4">
           <UpcomingEventsWidget />
-          <SchedulerUpdatesWidget />
+          {MODULES.schedulerUpdates && <SchedulerUpdatesWidget />}
         </div>
       </div>
 
-      {/* Latest Newsletter - Full Width */}
-      <LatestNewsletterWidget />
+      {/* Latest Newsletter - Full Width. Both widgets link into their module's
+          route, so they come down with it. */}
+      {MODULES.newsletter && <LatestNewsletterWidget />}
 
       {/* Quick Links Section */}
       <div className="bg-white dark:bg-portal-surface rounded-lg border border-gray-200 dark:border-portal-border p-3 sm:p-4">
         <h3 className="font-heading text-sm sm:text-base font-semibold text-gray-900 dark:text-white mb-3">Quick Links</h3>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-          {/* Portal Links */}
-          <Link
-            href="/portal/profile"
-            className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
-          >
-            <div className="bg-orange-50 dark:bg-portal-accent/10 p-1.5 rounded-lg">
-              <IconUser className="h-5 w-5 text-orange-600 dark:text-portal-accent flex-shrink-0" />
-            </div>
-            <span className="text-sm font-medium text-gray-900 dark:text-white">My Profile</span>
-          </Link>
-          <Link
-            href="/portal/resources"
-            className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
-          >
-            <div className="bg-blue-50 dark:bg-blue-500/[0.06] p-1.5 rounded-lg">
-              <IconBooks className="h-5 w-5 text-blue-600 dark:text-blue-300/60 flex-shrink-0" />
-            </div>
-            <span className="text-sm font-medium text-gray-900 dark:text-white">Resources</span>
-          </Link>
-          <Link
-            href="/portal/news"
-            className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
-          >
-            <div className="bg-purple-50 dark:bg-purple-500/[0.06] p-1.5 rounded-lg">
-              <IconNews className="h-5 w-5 text-purple-600 dark:text-purple-300/60 flex-shrink-0" />
-            </div>
-            <span className="text-sm font-medium text-gray-900 dark:text-white">News</span>
-          </Link>
-          <Link
-            href="/portal/calendar"
-            className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
-          >
-            <div className="bg-green-50 dark:bg-green-500/[0.06] p-1.5 rounded-lg">
-              <IconCalendar className="h-5 w-5 text-green-600 dark:text-green-300/60 flex-shrink-0" />
-            </div>
-            <span className="text-sm font-medium text-gray-900 dark:text-white">Calendar</span>
-          </Link>
-          <Link
-            href="/portal/newsletter"
-            className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
-          >
-            <div className="bg-amber-50 dark:bg-amber-500/[0.06] p-1.5 rounded-lg">
-              <IconNotebook className="h-5 w-5 text-amber-600 dark:text-amber-300/60 flex-shrink-0" />
-            </div>
-            <span className="text-sm font-medium text-gray-900 dark:text-white">Newsletter</span>
-          </Link>
-          <Link
-            href="/portal/rule-modifications"
-            className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
-          >
-            <div className="bg-red-50 dark:bg-red-500/[0.06] p-1.5 rounded-lg">
-              <IconGavel className="h-5 w-5 text-red-600 dark:text-red-300/60 flex-shrink-0" />
-            </div>
-            <span className="text-sm font-medium text-gray-900 dark:text-white">Rule Modifications</span>
-          </Link>
-          {user.role !== 'official' && (
-            <>
-              <Link
-                href="/portal/members"
-                className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
-              >
-                <div className="bg-indigo-50 dark:bg-indigo-500/[0.06] p-1.5 rounded-lg">
-                  <IconUsers className="h-5 w-5 text-indigo-600 dark:text-indigo-300/60 flex-shrink-0" />
-                </div>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">Members</span>
-              </Link>
-              <Link
-                href="/portal/evaluations"
-                className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
-              >
-                <div className="bg-teal-50 dark:bg-teal-500/[0.06] p-1.5 rounded-lg">
-                  <IconClipboard className="h-5 w-5 text-teal-600 dark:text-teal-300/60 flex-shrink-0" />
-                </div>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">Evaluations</span>
-              </Link>
-            </>
-          )}
-          {user.role === 'admin' && (
-            <>
-              <Link
-                href="/portal/admin"
-                className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
-              >
-                <div className="bg-slate-100 dark:bg-slate-700 p-1.5 rounded-lg">
-                  <IconSettings className="h-5 w-5 text-slate-600 dark:text-slate-400 flex-shrink-0" />
-                </div>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">Portal Admin</span>
-              </Link>
-              <Link
-                href="/portal/admin/logs"
-                className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
-              >
-                <div className="bg-slate-100 dark:bg-slate-700 p-1.5 rounded-lg">
-                  <IconReportAnalytics className="h-5 w-5 text-slate-600 dark:text-slate-400 flex-shrink-0" />
-                </div>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">System Logs</span>
-              </Link>
-              <Link
-                href="/portal/admin/email-history"
-                className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
-              >
-                <div className="bg-slate-100 dark:bg-slate-700 p-1.5 rounded-lg">
-                  <IconMail className="h-5 w-5 text-slate-600 dark:text-slate-400 flex-shrink-0" />
-                </div>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">Email History</span>
-              </Link>
-            </>
-          )}
+          {quickLinks.map(link => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="flex items-center gap-2 p-2.5 bg-white dark:bg-portal-surface rounded-md border border-gray-200 dark:border-portal-border hover:border-orange-200 dark:hover:border-portal-accent/30 hover:shadow-sm transition-all duration-200"
+            >
+              <div className={`${link.iconWrapClass} p-1.5 rounded-lg`}>
+                <link.icon className={`h-5 w-5 ${link.iconClass} flex-shrink-0`} />
+              </div>
+              <span className="text-sm font-medium text-gray-900 dark:text-white">{link.label}</span>
+            </Link>
+          ))}
           {/* External links -- rendered only for the services configured in lib/siteConfig.ts */}
           {EXTERNAL_LINKS.assigning && (
             <a

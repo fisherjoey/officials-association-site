@@ -68,7 +68,7 @@ Most members open this between games, on a phone.
 
 ## This is a static export
 
-`next.config.js` sets `output: 'export'` for production builds. `npm run build` writes a
+`next.config.ts` sets `output: 'export'` for production builds. `npm run build` writes a
 directory of HTML, CSS and JS to `out/`, and that is the whole front end. No Node server
 renders pages on request.
 
@@ -85,6 +85,11 @@ The constraint that catches people out: a broken import or a wrong asset path sh
 blank page or a silent 404, not a build failure. Look at the pages after a change. A green
 build is not evidence. Dev mode renders dynamically, so something can work locally and still
 be missing from the export.
+
+`node scripts/check-exported-links.mjs` catches part of that after a build: it reads every
+local `href` out of `out/` and fails on any that resolves to nothing. It is also why
+switching a portal module off has to happen at build time rather than at request time, which
+[Optional modules](#optional-modules) goes into.
 
 ---
 
@@ -282,10 +287,11 @@ Other scripts:
 
 | Command | Does |
 |---|---|
-| `npm test` | Unit tests. 317 across 18 suites, no external services. |
+| `npm test` | Unit tests. 356 across 23 suites, no external services. |
 | `npm run test:integration` | Integration tests against a real Supabase project. Needs `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Creates and cleans up tagged rows and a couple of throwaway auth users. |
 | `npm run build` | The production static export, into `out/`. |
 | `npx tsc --noEmit` | Type check. Use this one; `npm run lint` checks nothing, for the reason in [Known gaps](#known-gaps). |
+| `node scripts/check-exported-links.mjs` | Run after a build. Reads every local `href` out of `out/` and fails on any that resolves to nothing. |
 
 ---
 
@@ -346,6 +352,104 @@ it, rename it, or delete the route. The name is also a literal in the main navig
 page whether or not you keep the route behind it.
 
 Grep for your old organisation's name after a rebrand. It is the only reliable check.
+
+---
+
+## Optional modules
+
+Not every association wants the whole portal. Eight parts of it are switchable, in `MODULES`
+in `lib/siteConfig.ts` or through the matching `NEXT_PUBLIC_MODULE_*` variables. Everything
+ships on, so you can see what is there before deciding what to cut.
+
+| Module | Route | What it is | What it needs | Why you might turn it off |
+|---|---|---|---|---|
+| `evaluations` | `/portal/evaluations` | Evaluators file reports on officials; executives read them and track who has been assessed. | The evaluations tables, plus members carrying the evaluator role. | Your association assesses people in person and nobody wants to retype it into a form. |
+| `statistics` | `/portal/statistics` | Per-official game counts for a season, loaded from an Arbiter xlsx export. | The season-stats tables, and exports in the exact shape `lib/stats/arbiterGameInfo.ts` parses. | You do not use Arbiter. Note that nothing links to this route even when it is on, so it is the least missed of the eight. |
+| `newsletter` | `/portal/newsletter` | A PDF archive with an in-page viewer, and the latest-issue widget on the dashboard. | Somewhere to upload the PDFs, and somebody willing to write them. | You do not publish one. |
+| `ruleModifications` | `/portal/rule-modifications` | League-specific variations on the rulebook, written as markdown in `content/portal/rule-modifications/`. | Nothing beyond the content files. | Every league you serve plays the standard rules. |
+| `schedulerUpdates` | `/portal/scheduler-updates` | Short notices from whoever assigns games, and the matching dashboard widget. | Nothing. | Your scheduler already reaches people by email, or through the assigning system's own announcements. |
+| `mail` | `/portal/mail` | Compose and send to members, filtered by role. Admin and executive only. | A configured email provider (`EMAIL_PROVIDER` and its keys). | You send association mail from a list somewhere else. This is the first one to drop if you have not set up a provider. |
+| `adminLogs` | `/portal/admin/logs` | Reader for the application log and audit trail. | The `logs` table and the `logs` function. | You would rather read them in the Supabase dashboard, where you can write a real query. |
+| `adminEmailHistory` | `/portal/admin/email-history` | Every message the portal has sent, with delivery status. | The email-history table and its function. | Same reason, or you do not want a copy of the send history in the portal at all. |
+
+### What "off" actually does
+
+It stops the route being built. This is a static export, so there is no server standing by to
+answer a request with a 404: a route is either sitting in `out/` as HTML or it does not
+exist. Each optional route's page file is called `page.module-<key>.tsx` rather than
+`page.tsx`, and `next.config.ts` only tells Next.js to treat that filename as a route when
+the flag is on. Off, the file is never compiled, no chunk is emitted, and there is no
+directory under `out/`. Netlify serves your 404 page to anyone who has the URL.
+
+The navigation reads the same flags. `isRouteEnabled()` takes an href rather than a module
+name, so the portal header, the dashboard tiles and the admin index all put the question to
+one source instead of each keeping a list of their own. Two lists that have to agree is the
+bug this design exists to avoid: a hidden link with a live route behind it is merely
+confusing, but a live link with no route behind it is a 404 that a member finds for you.
+
+Three things it does not do:
+
+It is not access control. The Netlify Function and the Supabase table behind a disabled
+module are untouched, and anyone who can authenticate can still reach the function directly.
+Authorisation lives in `netlify/functions/` and in RLS, and that is where it stays. If you
+need a capability gone rather than absent from the site, delete the function and revoke the
+grants.
+
+It is not a runtime switch. The flags are read once, while you build. Changing one means a
+rebuild and a redeploy, and a browser holding the previous bundle keeps the previous
+navigation until it reloads.
+
+It does not delete anything. Rows stay in Supabase. Switch the module back on, rebuild, and
+everything is where you left it.
+
+One cosmetic oddity: the build summary reports a gated route's size as `0 B`. Next.js sizes
+routes by looking for a file called `page`, and these are not called that. The chunk is built
+and loaded like any other.
+
+### Adding or removing one
+
+To gate a route that is not on the list, add a key to `ModuleKey`, a flag to `MODULES` and an
+entry to `PORTAL_MODULES` in `lib/siteConfig.ts`, then rename the route's `page.tsx` to
+`page.module-<kebab-key>.tsx`. `__tests__/unit/config/modules.test.ts` fails if those four
+drift apart, and the two `__tests__/unit/portal/moduleNav*.test.tsx` files fail if the
+navigation stops asking.
+
+To remove a route outright, delete its directory and every link to it, then rebuild and run
+the link check:
+
+```bash
+npm run build && node scripts/check-exported-links.mjs
+```
+
+It pulls every `href` out of every exported page and asks the filesystem whether the target
+resolves. It only sees prerendered markup, though, so it cannot check the portal navigation
+at all: everything behind `AuthGuard` prerenders as a loading spinner. The two `moduleNav`
+test files are what cover that half.
+
+---
+
+## Who gets into the portal
+
+`app/portal/layout.tsx` wraps every portal page in one chain, and the order is load-bearing:
+
+```
+ThemeProvider → AuthProvider → AuthGuard → RoleProvider → MemberProvider → ToastProvider → MemberGuard
+```
+
+Two gates, asking different questions. `AuthGuard` asks whether somebody is logged in and
+sends everyone else to the login page. `MemberGuard` asks whether that logged-in user has a
+member record, and when they do not it renders the registration form inline instead of
+redirecting.
+
+The inline render is deliberate. Someone accepting an invitation and someone signing up on
+their own both land on a portal route holding an account with no member row behind it, and
+both get the same form in the same place. Redirecting would mean a separate registration
+route, a way of remembering where they were going, and two flows to keep working instead of
+one.
+
+Leave the ordering alone. `RoleProvider` and `MemberProvider` both read the session that
+`AuthProvider` establishes and `AuthGuard` has already vouched for, so moving either above
+the guard gives you a provider reading a session that may not exist.
 
 ---
 
@@ -468,7 +572,7 @@ policies before you do. Tracked as PLAT-36.
 ### `npm run lint` does not lint
 
 The script runs `next lint`, but there is no ESLint configuration anywhere in the
-repository, so it exits successfully having checked nothing. `next.config.js` sets
+repository, so it exits successfully having checked nothing. `next.config.ts` sets
 `eslint.ignoreDuringBuilds: false` with a comment about lint errors failing the build, and
 with no config to load that is inert too.
 

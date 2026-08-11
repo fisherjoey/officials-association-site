@@ -28,7 +28,14 @@ import {
 import ThemeToggle from '../ui/ThemeToggle'
 
 import { useAuth } from '@/contexts/AuthContext'
-import { ORG_SHORT_NAME, ORG_TAGLINE, ORG_LOGO_URL, ORG_LOGO_ALT, NEWSLETTER_NAME } from '@/lib/siteConfig'
+import {
+  ORG_SHORT_NAME,
+  ORG_TAGLINE,
+  ORG_LOGO_URL,
+  ORG_LOGO_ALT,
+  NEWSLETTER_NAME,
+  isRouteEnabled,
+} from '@/lib/siteConfig'
 
 export default function PortalHeader() {
   const { user } = useRole()
@@ -82,25 +89,34 @@ export default function PortalHeader() {
 
   type PortalLink = { href: string; label: string; icon: typeof IconHome; external?: boolean; executive?: boolean }
 
-  const topLinks: PortalLink[] = [
+  // Every list below is filtered through isRouteEnabled(). A module switched
+  // off in lib/siteConfig.ts is not in the static export, so its link would be
+  // a silent 404 rather than a broken build — the flag has to reach the nav
+  // from the same place it reaches next.config.ts.
+  const primaryLinks: PortalLink[] = [
     { href: '/portal', label: 'Dashboard', icon: IconHome },
     { href: '/portal/calendar', label: 'Calendar', icon: IconCalendar },
     { href: '/portal/resources', label: 'Resources', icon: IconBooks },
     { href: '/portal/evaluations', label: 'Evaluations', icon: IconClipboardCheck },
-    ...(user.role === 'admin' || user.role === 'executive'
+  ].filter(link => isRouteEnabled(link.href))
+
+  const staffLinks: PortalLink[] = (
+    user.role === 'admin' || user.role === 'executive'
       ? [{ href: '/portal/mail', label: 'Send Email', icon: IconMail }]
-      : []),
-  ]
+      : []
+  ).filter(link => isRouteEnabled(link.href))
+
+  const topLinks: PortalLink[] = [...primaryLinks, ...staffLinks]
 
   const updatesLinks: PortalLink[] = [
     { href: '/portal/news', label: 'News & Announcements', icon: IconNews },
     { href: '/portal/scheduler-updates', label: 'Scheduler Updates', icon: IconClockEdit },
     { href: '/portal/rule-modifications', label: 'Rule Modifications', icon: IconGavel },
     { href: '/portal/newsletter', label: NEWSLETTER_NAME, icon: IconNotebook },
-  ]
+  ].filter(link => isRouteEnabled(link.href))
 
   const updatesIsActive = updatesLinks.some(l => pathname === l.href)
-  const allLinks = [...topLinks.slice(0, 4), ...updatesLinks, ...topLinks.slice(4)]
+  const allLinks = [...primaryLinks, ...updatesLinks, ...staffLinks]
 
   return (
     <header className="sticky top-0 z-50">
@@ -207,6 +223,7 @@ export default function PortalHeader() {
             ))}
 
             {/* Updates Dropdown */}
+            {updatesLinks.length > 0 && (
             <li className="relative" ref={updatesMenuRef}>
               <button
                 onClick={() => setUpdatesMenuOpen(!updatesMenuOpen)}
@@ -241,6 +258,7 @@ export default function PortalHeader() {
                 </div>
               )}
             </li>
+            )}
           </ul>
 
           {/* Mobile Navigation */}
@@ -267,7 +285,7 @@ export default function PortalHeader() {
               {/* Mobile Links — all flat, grouped visually */}
               {allLinks.map((link, i) => {
                 // Insert a subtle section label before the updates group
-                const showUpdatesHeader = i === topLinks.slice(0, 4).length
+                const showUpdatesHeader = updatesLinks.length > 0 && i === primaryLinks.length
                 return (
                   <div key={link.href}>
                     {showUpdatesHeader && (

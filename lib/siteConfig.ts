@@ -338,11 +338,21 @@ export const PORTAL_FEATURES = {
   calendarDescription: 'Upcoming events and training sessions',
   ruleModifications: 'Rule Modifications',
   ruleModificationsDescription: 'League-specific rule changes',
+  serviceRequests: 'Service Requests',
+  serviceRequestsDescription: 'Requests for officials sent in from the public site',
 }
 
 /** Display name for the newsletter, e.g. "The Sideline". */
 export const NEWSLETTER_NAME =
   process.env.NEXT_PUBLIC_NEWSLETTER_NAME || PORTAL_FEATURES.newsletter
+
+/**
+ * Display name for the requests that arrive from the public `/get-officials`
+ * form, e.g. "Game Requests" or "Officiating Services Agreements". The route is
+ * `/portal/admin/service-requests` whatever you call it here.
+ */
+export const SERVICE_REQUESTS_NAME =
+  process.env.NEXT_PUBLIC_SERVICE_REQUESTS_NAME || PORTAL_FEATURES.serviceRequests
 
 /** Byline used when the portal publishes news on the association's behalf. */
 export const DEFAULT_AUTHOR = `${ORG_SHORT_NAME} Executive`
@@ -352,6 +362,172 @@ export const DEFAULT_AUTHOR = `${ORG_SHORT_NAME} Executive`
  * namespaces a new deploy away from data left by a previous one.
  */
 export const STORAGE_PREFIX = process.env.NEXT_PUBLIC_STORAGE_PREFIX || 'oas_'
+
+// ---------------------------------------------------------------------------
+// Optional portal modules
+// ---------------------------------------------------------------------------
+
+/**
+ * Parts of the portal not every association wants. Turn one off here and both
+ * its navigation entries and its route disappear.
+ *
+ * ## Why the two have to come from one place
+ *
+ * This site is a static export. There is no server to answer a request with a
+ * 404, so "disabled" cannot mean "the route rejects you at request time" — it
+ * has to mean the route is never written into `out/` at all. That is a
+ * build-time decision, made in `next.config.ts`. Hiding a nav link is a
+ * render-time decision, made in a component. Before this block those were two
+ * separate edits, and deleting a route left its links pointing at a page that
+ * no longer existed. A dangling link in a static export is a silent 404 on a
+ * live site, not a build error, so nothing caught it.
+ *
+ * `MODULES` is the single answer both questions read.
+ *
+ * ## How the route half works
+ *
+ * Each optional route's page file is named `page.module-<key>.tsx` instead of
+ * `page.tsx`. Next.js only treats a file as a route when its extension is in
+ * `pageExtensions`, and `next.config.ts` builds that list from the flags below
+ * via `enabledModulePageExtensions()`. A disabled module's file is therefore
+ * just a file: not a route, not compiled, not exported, not in `out/`.
+ *
+ * The consequence worth knowing: this is decided when you build, not when
+ * someone visits. Flipping a flag needs a rebuild and a redeploy. Nothing is
+ * revoked from a browser that already has the old bundle, and the Netlify
+ * function and Supabase table behind a disabled module are untouched — read
+ * "Optional modules" in the README before you assume a flag is an access
+ * control. It is not. It is a way to ship less site.
+ *
+ * ## Adding a module
+ *
+ * Add the key to `ModuleKey`, a flag to `MODULES`, an entry to
+ * `PORTAL_MODULES`, and rename the route's `page.tsx` to
+ * `page.module-<kebab-key>.tsx`. `__tests__/unit/config/modules.test.ts` fails
+ * if any of those four drift apart.
+ */
+export type ModuleKey =
+  | 'evaluations'
+  | 'statistics'
+  | 'newsletter'
+  | 'ruleModifications'
+  | 'schedulerUpdates'
+  | 'mail'
+  | 'adminLogs'
+  | 'adminEmailHistory'
+
+/**
+ * Resolve one flag from its environment override.
+ *
+ * Strict on purpose. A typo like `NEXT_PUBLIC_MODULE_MAIL=off` under a loose
+ * parse means the module stays on and nobody finds out until they notice the
+ * route in production, so anything other than `true` or `false` stops the
+ * build. The variable name is passed separately because the read itself has to
+ * be written out longhand — see the note at the top of this file.
+ */
+const moduleFlag = (name: string, raw: string | undefined, fallback: boolean): boolean => {
+  if (raw === undefined || raw === '') return fallback
+  if (raw === 'true') return true
+  if (raw === 'false') return false
+  throw new Error(`${name} must be "true" or "false", got ${JSON.stringify(raw)}`)
+}
+
+/**
+ * Every optional module ships on, so an adopter sees the whole portal before
+ * deciding what to remove.
+ */
+export const MODULES: Record<ModuleKey, boolean> = {
+  evaluations: moduleFlag(
+    'NEXT_PUBLIC_MODULE_EVALUATIONS',
+    process.env.NEXT_PUBLIC_MODULE_EVALUATIONS,
+    true
+  ),
+  statistics: moduleFlag(
+    'NEXT_PUBLIC_MODULE_STATISTICS',
+    process.env.NEXT_PUBLIC_MODULE_STATISTICS,
+    true
+  ),
+  newsletter: moduleFlag(
+    'NEXT_PUBLIC_MODULE_NEWSLETTER',
+    process.env.NEXT_PUBLIC_MODULE_NEWSLETTER,
+    true
+  ),
+  ruleModifications: moduleFlag(
+    'NEXT_PUBLIC_MODULE_RULE_MODIFICATIONS',
+    process.env.NEXT_PUBLIC_MODULE_RULE_MODIFICATIONS,
+    true
+  ),
+  schedulerUpdates: moduleFlag(
+    'NEXT_PUBLIC_MODULE_SCHEDULER_UPDATES',
+    process.env.NEXT_PUBLIC_MODULE_SCHEDULER_UPDATES,
+    true
+  ),
+  mail: moduleFlag('NEXT_PUBLIC_MODULE_MAIL', process.env.NEXT_PUBLIC_MODULE_MAIL, true),
+  adminLogs: moduleFlag(
+    'NEXT_PUBLIC_MODULE_ADMIN_LOGS',
+    process.env.NEXT_PUBLIC_MODULE_ADMIN_LOGS,
+    true
+  ),
+  adminEmailHistory: moduleFlag(
+    'NEXT_PUBLIC_MODULE_ADMIN_EMAIL_HISTORY',
+    process.env.NEXT_PUBLIC_MODULE_ADMIN_EMAIL_HISTORY,
+    true
+  ),
+}
+
+export interface PortalModule {
+  key: ModuleKey
+  /**
+   * The route this module owns. Nav code does not name modules — it passes
+   * hrefs to `isRouteEnabled`, which looks them up here, so a link and the page
+   * it points at cannot disagree about whether the module is on.
+   */
+  path: string
+  /** Label for nav entries and dashboard tiles. */
+  label: string
+}
+
+export const PORTAL_MODULES: readonly PortalModule[] = [
+  { key: 'evaluations', path: '/portal/evaluations', label: 'Evaluations' },
+  { key: 'statistics', path: '/portal/statistics', label: 'Statistics' },
+  { key: 'newsletter', path: '/portal/newsletter', label: NEWSLETTER_NAME },
+  {
+    key: 'ruleModifications',
+    path: '/portal/rule-modifications',
+    label: PORTAL_FEATURES.ruleModifications,
+  },
+  { key: 'schedulerUpdates', path: '/portal/scheduler-updates', label: 'Scheduler Updates' },
+  { key: 'mail', path: '/portal/mail', label: 'Send Email' },
+  { key: 'adminLogs', path: '/portal/admin/logs', label: 'System Logs' },
+  { key: 'adminEmailHistory', path: '/portal/admin/email-history', label: 'Email History' },
+]
+
+/**
+ * Whether a portal link should be rendered.
+ *
+ * Takes an href rather than a module key so that link lists stay lists of
+ * links. A path no module claims is a core route and always passes.
+ */
+export const isRouteEnabled = (href: string): boolean => {
+  const owner = PORTAL_MODULES.find((mod) => mod.path === href)
+  return owner ? MODULES[owner.key] : true
+}
+
+/**
+ * The file extension that makes a module's page file a route:
+ * `adminEmailHistory` → `module-admin-email-history.tsx`, so the file is
+ * `app/portal/admin/email-history/page.module-admin-email-history.tsx`.
+ */
+export const modulePageExtension = (key: ModuleKey): string =>
+  `module-${key.replace(/[A-Z]/g, (upper) => `-${upper.toLowerCase()}`)}.tsx`
+
+/**
+ * What `next.config.ts` appends to `pageExtensions`. Extensions for disabled
+ * modules are left out, and Next.js then treats those page files as ordinary
+ * colocated source: no route, no chunk, nothing in `out/`.
+ */
+export const enabledModulePageExtensions = (): string[] =>
+  PORTAL_MODULES.filter((mod) => MODULES[mod.key]).map((mod) => modulePageExtension(mod.key))
 
 // ---------------------------------------------------------------------------
 // Derived helpers
@@ -430,7 +606,9 @@ export const siteConfig = {
     subjects: EMAIL_SUBJECTS,
   },
   features: PORTAL_FEATURES,
+  modules: MODULES,
   newsletterName: NEWSLETTER_NAME,
+  serviceRequestsName: SERVICE_REQUESTS_NAME,
   defaultAuthor: DEFAULT_AUTHOR,
   storagePrefix: STORAGE_PREFIX,
   getCopyrightYear,

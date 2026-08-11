@@ -22,7 +22,7 @@ import { handler as officialsHandler } from '@/netlify/functions/officials'
 import { handler as contactSubmissionsHandler } from '@/netlify/functions/contact-submissions'
 import { handler as emailHistoryHandler } from '@/netlify/functions/email-history'
 import { handler as logsHandler } from '@/netlify/functions/logs'
-import { handler as osaSubmissionsHandler } from '@/netlify/functions/osa-submissions'
+import { handler as serviceRequestsHandler } from '@/netlify/functions/service-requests'
 
 import { invokeFunction } from './helpers/invokeFunction'
 import {
@@ -77,7 +77,7 @@ const ADMIN_ONLY_SPECS: Spec[] = [
   { name: 'contact-submissions', handler: contactSubmissionsHandler, read: 'admin' },
   { name: 'email-history', handler: emailHistoryHandler, read: 'admin' },
   { name: 'logs', handler: logsHandler, read: 'admin' },
-  { name: 'osa-submissions', handler: osaSubmissionsHandler, read: 'admin' },
+  { name: 'service-requests', handler: serviceRequestsHandler, read: 'admin' },
 ]
 
 describe('portal — authenticated reads', () => {

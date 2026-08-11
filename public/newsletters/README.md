@@ -23,7 +23,7 @@ This directory contains the newsletter PDF files.
 
 ## Adding New Newsletters
 1. Upload the PDF file to the appropriate year folder
-2. Update the newsletter data in the CMS or `/app/portal/newsletter/page.tsx`
+2. Update the newsletter data in the CMS or `/app/portal/newsletter/page.module-newsletter.tsx`
 3. Ensure file size is optimized (ideally under 5MB)
 
 ## PDF Requirements
