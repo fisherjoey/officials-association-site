@@ -12,6 +12,7 @@ import { DEFAULT_AUTHOR } from '@/lib/siteConfig'
 import {
   AUDIENCE_GROUPS,
   audienceGroupsFor,
+  findAudienceGroup,
   hasRole,
   principalInAudienceGroup,
   toPrincipal,
@@ -517,12 +518,7 @@ export default function MailPage() {
                               key={group}
                               className={`text-xs px-1.5 py-0.5 rounded ${
                                 isViaGroup && selectedGroups.some(g =>
-                                  (g === 'officials' && group === 'Official') ||
-                                  (g === 'executives' && group === 'Executive') ||
-                                  (g === 'admins' && group === 'Admin') ||
-                                  (g === 'evaluators' && group === 'Evaluator') ||
-                                  (g === 'mentors' && group === 'Mentor') ||
-                                  (g === 'all')
+                                  g === 'all' || findAudienceGroup(g)?.label === group
                                 )
                                   ? 'bg-orange-200 dark:bg-orange-800 text-orange-800 dark:text-orange-200'
                                   : 'bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300'
