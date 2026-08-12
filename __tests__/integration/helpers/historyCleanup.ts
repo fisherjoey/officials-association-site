@@ -13,6 +13,19 @@ import { getSupabaseAdmin, E2E_TAG } from './supabase'
 
 const PATTERN = `%${E2E_TAG}%`
 
+/**
+ * `app_logs` and `audit_logs` are swept with ILIKE rather than LIKE, and that
+ * is not cosmetic. Most tagged rows in those two tables are not seeded — they
+ * are what the Logger writes while a handler runs, and the tag reaches them
+ * through a test user's address, which is lower-cased (`e2e-test-…`). A
+ * case-sensitive sweep left every one of those behind, run after run, while
+ * `logs.ts` searches them with ILIKE and finds them all. The suite's own
+ * assertion is "page 1 of 50, newest first", and the seeded INFO row is
+ * timestamped a minute in the past, so about sixty seconds' worth of
+ * uncollected rows is enough to push it off the page — a failure that arrives
+ * days later and looks like a filter bug.
+ */
+
 /** email_history: tag is on `subject`. */
 export async function cleanupEmailHistoryRows(): Promise<void> {
   const sb = getSupabaseAdmin()
@@ -25,25 +38,25 @@ export async function cleanupEmailHistoryRows(): Promise<void> {
   }
 }
 
-/** app_logs: tag is on `message`. */
+/** app_logs: tag is on `message`, in either case — see the note above. */
 export async function cleanupAppLogsRows(): Promise<void> {
   const sb = getSupabaseAdmin()
   const { error } = await sb
     .from('app_logs')
     .delete()
-    .like('message', PATTERN)
+    .ilike('message', PATTERN)
   if (error) {
     console.warn('cleanup app_logs.message failed:', error.message)
   }
 }
 
-/** audit_logs: tag is on `description`. */
+/** audit_logs: tag is on `description`, in either case. */
 export async function cleanupAuditLogsRows(): Promise<void> {
   const sb = getSupabaseAdmin()
   const { error } = await sb
     .from('audit_logs')
     .delete()
-    .like('description', PATTERN)
+    .ilike('description', PATTERN)
   if (error) {
     console.warn('cleanup audit_logs.description failed:', error.message)
   }

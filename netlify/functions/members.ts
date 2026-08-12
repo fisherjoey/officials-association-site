@@ -1,5 +1,5 @@
 import { createHandler, findAuthUserByEmail, errorResponse } from './_shared/handler'
-import { hasRole, DEFAULT_STRUCTURAL_ROLE } from '../../lib/roles'
+import { hasRole, normalizeStructuralRole, DEFAULT_STRUCTURAL_ROLE } from '../../lib/roles'
 import { sendEmail } from '../../lib/email'
 import {
   EMAIL_ANNOUNCEMENTS,
@@ -17,9 +17,9 @@ import {
 
 /**
  * Wire shape the PUT branch accepts. Caller MUST send `id`; everything
- * else is optional and patched onto the row. Privileged fields
- * (role/capabilities/email/netlify_user_id/user_id/status/rank) are stripped
- * from non-admin callers — see the strip list in the PUT handler.
+ * else is optional and patched onto the row. A non-admin caller keeps only
+ * the columns in `SELF_SERVICE_COLUMNS` below; everything else — named here
+ * or not — is dropped before the write.
  */
 export interface MemberUpdatePayload {
   id: string
@@ -101,6 +101,76 @@ const FORBIDDEN = (msg?: string) => errorResponse({
   code: 'forbidden',
   message: msg,
 })
+
+/**
+ * Columns a member may write on their own roster row.
+ *
+ * An allow-list, not a list of things to strip, and the difference is the whole
+ * point: the two fail in opposite directions when this file and the schema
+ * drift apart. A strip-list admits every column nobody thought to name, and
+ * `members` gains columns. `capabilities` reached the roster through exactly
+ * that gap — the POST guard asked whether the caller had sent an *array* of
+ * grants, the string `'{evaluator}'` is not an array so it walked past, and
+ * PostgREST's `json_populate_record` cast the array literal into the `text[]`
+ * column on the way in. This function holds the service-role key, so the guard
+ * trigger in migration 0015 never saw the write.
+ *
+ * The rule this encodes: reject what you do not recognise, rather than
+ * recognising what you meant to reject.
+ */
+const SELF_SERVICE_COLUMNS: ReadonlySet<string> = new Set([
+  'name',
+  'phone',
+  'certification_level',
+  'address',
+  'city',
+  'province',
+  'postal_code',
+  'emergency_contact_name',
+  'emergency_contact_phone',
+  'custom_fields',
+])
+
+/**
+ * …plus `status` on the way in. On INSERT the row does not exist yet, `active`
+ * is what the column defaults to, and it is what both registration clients
+ * send. On UPDATE it stays admin-only: a member must not be able to undo their
+ * own suspension.
+ */
+const SELF_SERVICE_INSERT_COLUMNS: ReadonlySet<string> = new Set([
+  ...SELF_SERVICE_COLUMNS,
+  'status',
+])
+
+/**
+ * True when this roster row hands its holder nothing beyond the floor every
+ * signed-in member gets by registering: the default rung, and no grants.
+ *
+ * This is the test that decides whether an unlinked row may be claimed by the
+ * account at its address — see the PUT branch. It reads the row rather than
+ * anything the caller says about themselves, which is the property that makes
+ * it safe: an unlinked row is only ever a claim to be *somebody*, and this
+ * keeps it from being a claim to be somebody in particular.
+ *
+ * Conservative on anything it does not recognise. A `role` the model cannot
+ * name is not the default rung, so it is not claimable; the CHECK constraint in
+ * migration 0015 means that value cannot exist today, and this stays right if
+ * it ever can.
+ */
+export function conveysNothingBeyondTheDefault(row: {
+  role?: unknown
+  capabilities?: unknown
+}): boolean {
+  const roleIsDefault =
+    row.role === null ||
+    row.role === undefined ||
+    normalizeStructuralRole(row.role) === DEFAULT_STRUCTURAL_ROLE
+  const noGrants =
+    row.capabilities === null ||
+    row.capabilities === undefined ||
+    (Array.isArray(row.capabilities) && row.capabilities.length === 0)
+  return roleIsDefault && noGrants
+}
 
 export const handler = createHandler({
   name: 'members',
@@ -210,7 +280,10 @@ export const handler = createHandler({
         const body = JSON.parse(event.body || '{}')
         const { email, name, role, skipInvite, ...memberData } = body
 
-        if (!email) {
+        // Typed here rather than at the point of use. `email` is compared
+        // case-insensitively against the caller's below, and `.toLowerCase()`
+        // on an array or an object is a 500 pretending to be a bug report.
+        if (!email || typeof email !== 'string') {
           return errorResponse({
             code: 'invalid_input',
             message: 'Email is required.',
@@ -219,26 +292,52 @@ export const handler = createHandler({
         }
 
         // Non-admins can only create their own member row, may not assign
-        // anything but the default rung, and may not arrive holding capability
-        // grants. The last of those is new and matters: `capabilities` is what
-        // the RLS policies read, so a self-insert carrying `['evaluator']`
-        // would be a member granting themselves every evaluation in the
-        // association on the way in. The guard trigger in migration 0015 says
-        // the same thing at the database, but this function holds the
-        // service-role key and RLS never applies to it, so the check has to
-        // exist here too.
+        // anything but the default rung, may not arrive holding capability
+        // grants, and may not set a column that is not theirs to set.
+        //
+        // `capabilities` is what the RLS policies read and what
+        // `getPrincipal()` resolves a caller from, so a self-insert carrying
+        // `['evaluator']` would be a member granting themselves every
+        // evaluation in the association on the way in. The guard trigger in
+        // migration 0015 says the same thing at the database, but this function
+        // holds the service-role key and RLS never applies to it, so the check
+        // has to exist here too — and it has to refuse every shape that reaches
+        // the column, not just the one shape somebody pictured. See
+        // `SELF_SERVICE_COLUMNS`.
         if (!isAdmin) {
           if (email.toLowerCase() !== callerEmail) {
             return FORBIDDEN('Cannot create a member record for another user')
           }
-          if (role && role !== DEFAULT_STRUCTURAL_ROLE) {
+          if (role !== undefined && role !== null && role !== DEFAULT_STRUCTURAL_ROLE) {
             return FORBIDDEN('Cannot assign a role')
           }
-          if (Array.isArray(memberData.capabilities) && memberData.capabilities.length > 0) {
+          // Not "did they send a non-empty array of grants". The only shape a
+          // non-admin may send is no grants at all; a string, an object and a
+          // populated array are all refused, because PostgREST will happily
+          // turn any of them into a `text[]`.
+          const sentCapabilities = memberData.capabilities
+          const noCapabilities =
+            sentCapabilities === undefined ||
+            sentCapabilities === null ||
+            (Array.isArray(sentCapabilities) && sentCapabilities.length === 0)
+          if (!noCapabilities) {
             return FORBIDDEN('Cannot assign capabilities')
           }
-          if (memberData.user_id && memberData.user_id !== callerId) {
+          if (
+            memberData.user_id !== undefined &&
+            memberData.user_id !== null &&
+            memberData.user_id !== callerId
+          ) {
             return FORBIDDEN('user_id must match the authenticated user')
+          }
+          const unexpected = Object.keys(memberData)
+            .filter((key) => key !== 'capabilities' && key !== 'user_id')
+            .filter((key) => !SELF_SERVICE_INSERT_COLUMNS.has(key))
+            .sort()
+          if (unexpected.length > 0) {
+            return FORBIDDEN(
+              `Cannot set ${unexpected.join(', ')} on your own member record`
+            )
           }
         }
 
@@ -377,32 +476,59 @@ export const handler = createHandler({
           return errorResponse({ code: 'not_found', message: 'That member couldn’t be found.' })
         }
 
-        // Non-admins must own the row, either by user_id link or (for the
-        // initial linking flow) by matching email on a row whose user_id
-        // is still null. Privileged fields are stripped regardless.
+        // Non-admins must own the row: either it already points at them, or it
+        // is an unclaimed row addressed to them that grants nothing beyond the
+        // default rung.
+        //
+        // ## Why claiming is capped at the default rung
+        //
+        // `user_id` is the column that binds a rung to a person. An unlinked
+        // row at `role: 'admin'` — which is what `POST /members` leaves
+        // whenever an admin creates a member with `skipInvite` before an auth
+        // user exists, and what a bulk roster import leaves behind — used to be
+        // claimable by anyone who could sign up at its address, and claiming it
+        // made them an administrator. The guard trigger in migration 0015
+        // refuses exactly that write; this function holds the service-role key,
+        // so the trigger never sees it.
+        //
+        // Email is not proof. An address is only evidence of controlling a
+        // mailbox when Supabase is configured to confirm it, and confirmations
+        // are off by default — see "Auth configuration" in the README. So the
+        // claim is capped at something that would be true anyway: a row at the
+        // default rung with no grants hands over nothing the caller could not
+        // have got by registering a fresh row at their own address. Anything
+        // above that floor is linked by an admin (the branch below, or the
+        // `sync-members-auth` sweep) or by the invite flow, which links the row
+        // server-side when the invitation is redeemed.
         if (!isAdmin) {
           const ownsByUserId = existing.user_id === callerId
-          const ownsByEmail = !existing.user_id
-            && (existing.email || '').toLowerCase() === callerEmail
-          if (!ownsByUserId && !ownsByEmail) {
-            return FORBIDDEN()
+          const addressedToCaller =
+            !existing.user_id && (existing.email || '').toLowerCase() === callerEmail
+          const claimable = addressedToCaller && conveysNothingBeyondTheDefault(existing)
+
+          if (!ownsByUserId && !claimable) {
+            return FORBIDDEN(
+              addressedToCaller
+                ? 'This membership has to be linked to your account by an administrator.'
+                : undefined
+            )
           }
-          delete updates.role
-          // `capabilities` is exactly as privileged as `role` — appending
-          // 'evaluator' to your own row opens every evaluation in the
-          // association through the RLS policy in migration 0015 — so it is
-          // stripped on the same line of reasoning. This function holds the
-          // service-role key, so the guard trigger that would otherwise catch
-          // it never fires here.
-          delete updates.capabilities
-          delete updates.email
-          delete updates.netlify_user_id
-          // status and rank are admin-only fields. A non-admin must not
-          // be able to undo a suspension or self-promote rank by self-PUT.
-          delete updates.status
-          delete updates.rank
-          if ('user_id' in updates && updates.user_id !== callerId) {
-            delete updates.user_id
+
+          // Keep only what is the caller's to write, by name. `role` and
+          // `capabilities` are the two columns every authorisation decision in
+          // the app reads, `email` re-points the row at somebody else,
+          // `status` would undo a suspension and `rank` is seniority — but the
+          // list is an allow-list precisely so that the next privileged column
+          // does not have to be remembered here. See `SELF_SERVICE_COLUMNS`.
+          for (const key of Object.keys(updates)) {
+            if (!SELF_SERVICE_COLUMNS.has(key)) delete updates[key]
+          }
+
+          // …and then the one write that is not a profile field: binding this
+          // row to the account claiming it. Only on a claimable row, and only
+          // to the caller themselves.
+          if (claimable && body.user_id === callerId) {
+            updates.user_id = callerId
           }
         }
 
@@ -427,28 +553,13 @@ export const handler = createHandler({
 
         if (error) throw error
 
-        // If role or capabilities changed, mirror them onto the auth user's
-        // app_metadata. The function layer resolves a caller's principal from
-        // that metadata while the RLS policies read the roster row, so a
-        // roster change that is not mirrored leaves the two layers disagreeing
-        // — the database would let an evaluator read and the function would
-        // not. `updateUserById` merges at the top level of app_metadata, so
-        // sending one key does not clear the other.
-        if ((updates.role || updates.capabilities) && data.user_id) {
-          const appMetadata: Record<string, unknown> = {}
-          if (updates.role) appMetadata.role = updates.role
-          if (updates.capabilities) appMetadata.capabilities = updates.capabilities
-          try {
-            await supabase.auth.admin.updateUserById(data.user_id, {
-              app_metadata: appMetadata
-            })
-            logger.info('crud', 'role_sync_success', `Synced role to auth for user ${data.user_id}`, {
-              metadata: { userId: data.user_id, newRole: updates.role, newCapabilities: updates.capabilities }
-            })
-          } catch (authError) {
-            logger.error('crud', 'role_sync_failed', `Failed to sync role to auth for user ${data.user_id}`, authError instanceof Error ? authError : new Error(String(authError)))
-          }
-        }
+        // There is no longer a copy of the rung to keep in step. This used to
+        // mirror `role` and `capabilities` onto the auth user's app_metadata,
+        // because the function layer resolved principals from there while RLS
+        // read the roster row, and an unmirrored roster change left the two
+        // disagreeing. Both layers read the roster row now, so the write above
+        // is the whole change — and the mirror, being a second copy that could
+        // fall behind, was the thing worth deleting rather than maintaining.
 
         await logger.audit('UPDATE', 'member', id, {
           actorId: callerId,

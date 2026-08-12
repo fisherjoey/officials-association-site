@@ -22,19 +22,42 @@ export interface TestUser {
   /** The grants that name resolves to. This is what goes in `capabilities`. */
   capabilities: Capability[]
   accessToken: string
+  /** `members.id` of the roster row that gives this user their rung. */
+  memberId: string | null
+}
+
+export interface CreateTestUserOptions {
+  /** Extra capability grants on top of whatever the role name resolves to. */
+  capabilities?: Capability[]
+  /**
+   * Skip the roster row. Produces a signed-in account with no rung at all,
+   * which is what a self-signup looks like before it registers. Only reach for
+   * this when that state is the thing under test.
+   */
+  roster?: false
 }
 
 /**
- * Create a fresh Supabase user with the given role, sign them in, and
- * return an access token. Caller is responsible for `deleteTestUser` —
- * or use `withTestUser` which scopes that for you.
+ * Create a fresh Supabase user with the given role, put them on the roster at
+ * that rung, sign them in, and return an access token. Caller is responsible
+ * for `deleteTestUser` — or use `withTestUser` which scopes that for you.
+ *
+ * The roster row is not decoration. `getPrincipal()` resolves a caller's rung
+ * and grants from `members.role` and `members.capabilities` and from nowhere
+ * else, so an auth user without a row is nobody as far as every handler is
+ * concerned, whatever its metadata says. Creating the row here is what makes
+ * `createTestUser('admin')` mean "an admin".
  */
 export async function createTestUser(
   role: TestRole,
-  extraCapabilities: Capability[] = []
+  extraCapabilities: Capability[] | CreateTestUserOptions = []
 ): Promise<TestUser> {
+  const options: CreateTestUserOptions = Array.isArray(extraCapabilities)
+    ? { capabilities: extraCapabilities }
+    : extraCapabilities
+
   const admin = getSupabaseAdmin()
-  const principal = toPrincipal({ role, capabilities: extraCapabilities })
+  const principal = toPrincipal({ role, capabilities: options.capabilities ?? [] })
   const structuralRole = principal.role ?? 'member'
   const capabilities = [...principal.capabilities]
   const email = `${E2E_TAG.toLowerCase()}-${role}-${Date.now()}-${Math.floor(Math.random() * 100000)}@example.test`
@@ -44,14 +67,35 @@ export async function createTestUser(
     email,
     password,
     email_confirm: true,
-    // app_metadata carries the split shape, because that is what the function
-    // layer resolves a caller's principal from. Capabilities are read from here
-    // and never from user_metadata — see getPrincipal() in _shared/handler.ts.
-    app_metadata: { role: structuralRole, capabilities },
+    // Metadata carries the name only. Neither bag is read by the role
+    // resolvers any more — see getPrincipal() in _shared/handler.ts — so
+    // stamping a role in here would describe a privilege the user does not
+    // have and would quietly weaken every test that asserts a refusal.
     user_metadata: { full_name: `E2E ${role}`, first_name: 'E2E', last_name: role },
   })
   if (createErr || !created.user) {
     throw new Error(`Failed to create test user: ${createErr?.message ?? 'unknown'}`)
+  }
+
+  let memberId: string | null = null
+  if (options.roster !== false) {
+    const { data: member, error: memberErr } = await admin
+      .from('members')
+      .insert({
+        user_id: created.user.id,
+        email,
+        name: `E2E ${role}`,
+        role: structuralRole,
+        capabilities,
+        status: 'active',
+      })
+      .select('id')
+      .single()
+    if (memberErr || !member) {
+      await admin.auth.admin.deleteUser(created.user.id).catch(() => {})
+      throw new Error(`Failed to seed roster row: ${memberErr?.message ?? 'unknown'}`)
+    }
+    memberId = member.id
   }
 
   // Use a fresh anon client to sign in — the admin client should not be
@@ -65,6 +109,7 @@ export async function createTestUser(
 
   const { data: signin, error: signinErr } = await client.auth.signInWithPassword({ email, password })
   if (signinErr || !signin.session) {
+    if (memberId) await admin.from('members').delete().eq('id', memberId)
     await admin.auth.admin.deleteUser(created.user.id).catch(() => {})
     throw new Error(`Failed to sign in test user: ${signinErr?.message ?? 'unknown'}`)
   }
@@ -77,11 +122,19 @@ export async function createTestUser(
     structuralRole,
     capabilities,
     accessToken: signin.session.access_token,
+    memberId,
   }
 }
 
 export async function deleteTestUser(user: { id: string }): Promise<void> {
   const admin = getSupabaseAdmin()
+  // Roster row first. `members.user_id` is ON DELETE SET NULL, so deleting the
+  // auth user alone leaves an orphan row that the next run's email-prefix
+  // cleanup has to find — and that a `user_id` lookup never will.
+  const { error: memberErr } = await admin.from('members').delete().eq('user_id', user.id)
+  if (memberErr) {
+    console.warn('deleteTestUser roster cleanup failed:', memberErr.message)
+  }
   const { error } = await admin.auth.admin.deleteUser(user.id)
   if (error) {
     console.warn('deleteTestUser failed:', error.message)

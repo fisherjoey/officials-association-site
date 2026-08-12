@@ -1,13 +1,14 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/api/client'
 import { membersAPI } from '@/lib/api'
 import { clearSignedUrlCache } from '@/lib/fileDownload'
 import { clientLogger } from '@/lib/clientLogger'
 import type { User as SupabaseUser, Session } from '@supabase/supabase-js'
 import {
-  toPrincipal,
+  ANONYMOUS,
+  principalFromMemberRow,
   type Capability,
   type Principal,
   type StructuralRole,
@@ -17,8 +18,12 @@ interface User {
   id: string
   email: string
   name: string
-  /** Rung on the org ladder. See `lib/roles.ts`. */
-  role: StructuralRole
+  /**
+   * Rung on the org ladder, from the roster row. `null` for a signed-in account
+   * that is not on the roster yet — the state `MemberGuard` renders the
+   * registration form for. See `lib/roles.ts`.
+   */
+  role: StructuralRole | null
   /** Capability grants, orthogonal to `role`. */
   capabilities: readonly Capability[]
   user_metadata?: any
@@ -43,74 +48,87 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 const supabase = getSupabaseBrowserClient()
 
 /**
- * Resolve a Supabase auth user to a structural role plus capability grants.
+ * Resolve the signed-in user to a structural role plus capability grants, from
+ * their roster row.
  *
- * This mirrors `getPrincipal()` in `netlify/functions/_shared/handler.ts` and
- * has to keep mirroring it — the browser deciding which tiles to render and the
- * function deciding whether to answer must agree, or the portal shows a control
- * that 403s. Both now defer to `toPrincipal()` so there is one resolver rather
- * than two implementations of the same precedence rules.
+ * This is the browser's copy of `getPrincipal()` in
+ * `netlify/functions/_shared/handler.ts`, and the two have to keep agreeing:
+ * this one decides which tiles render, that one decides whether to answer, and
+ * a disagreement is a button that 403s. They agree because they read the same
+ * two columns through the same `principalFromMemberRow()`.
  *
- * The `user_metadata` fallback below is the known hole documented in the
- * README (PLAT-33): `user_metadata` is writable by the user with a plain
- * authenticated call, so an account with no server-set `app_metadata.role` can
- * name its own role. Preserved deliberately — removing it here without removing
- * it in the function layer would only desynchronise the two, and the fix is
- * tracked separately.
+ * It used to read `app_metadata.role || user_metadata.role`, which was the
+ * client half of the escalation the function layer carried — the account could
+ * write its own `user_metadata` with a plain `PUT /auth/v1/user`. Nothing here
+ * was ever a security boundary; the API is. But a browser that believes a
+ * self-declared admin is a browser full of controls that fail, and a screenshot
+ * of an admin dashboard is a convincing thing to be wrong about.
  *
- * The explicit `capabilities` list is read from `app_metadata` and nowhere else.
- * That is narrower than it looks, and is not a boundary: `role` and `roles`
- * below still fall back to `user_metadata`, and `toPrincipal()` derives a
- * capability from either of them, so `user_metadata.role = 'evaluator'` yields
- * a member holding the evaluator grant. PLAT-33 therefore reaches the
- * capability grants as well as the rung. Closing it means dropping the
- * `user_metadata` fallback from the role fields, not just withholding the
- * `capabilities` key from it.
+ * ## Cost
+ *
+ * One roster fetch per auth event that carries a session. At sign-in it is
+ * folded into the lookup `syncUserToMembers` was already doing and costs
+ * nothing extra; on `TOKEN_REFRESHED` and `USER_UPDATED` it is a new request
+ * that the old metadata-reading version did not make, so each open tab adds one
+ * `members` lookup per token refresh — roughly hourly per tab. `MemberContext`
+ * fetches the fuller row separately for the profile screens, so a refresh costs
+ * two lookups, not one. That is the price of a rung that can be taken away
+ * within the hour instead of lasting as long as the tab does.
  */
-function getPrincipal(supabaseUser: SupabaseUser | null): Principal {
-  if (!supabaseUser) return toPrincipal(null)
-
-  return toPrincipal({
-    // `||` not `??`, matching the resolver this replaces: an empty-string role
-    // in app_metadata falls through to user_metadata rather than winning.
-    role: supabaseUser.app_metadata?.role || supabaseUser.user_metadata?.role,
-    roles: [
-      ...(supabaseUser.app_metadata?.roles ?? []),
-      ...(supabaseUser.user_metadata?.roles ?? []),
-    ],
-    capabilities: supabaseUser.app_metadata?.capabilities,
-  })
+async function resolvePrincipal(supabaseUser: SupabaseUser | null): Promise<Principal> {
+  if (!supabaseUser) return ANONYMOUS
+  try {
+    const row = await membersAPI.getByUserId(supabaseUser.id)
+    return principalFromMemberRow(row)
+  } catch (error) {
+    // Fail closed. A user who looks like nobody sees the registration screen;
+    // a user who wrongly looks like an admin sees controls that 403.
+    clientLogger.warn(
+      'auth',
+      'principal_lookup_failed',
+      'Could not read the roster row; treating this session as having no role',
+      { reason: error instanceof Error ? error.message : String(error) }
+    )
+    return ANONYMOUS
+  }
 }
 
-// Sync Supabase Auth user with members table
-async function syncUserToMembers(supabaseUser: SupabaseUser): Promise<void> {
+/**
+ * Put a first-time signer-in on the roster, and report who they are once they
+ * are on it.
+ *
+ * The roster row is now the only thing that confers anything, so this is also
+ * the moment a new account acquires a rung. It acquires the bottom one:
+ * `membersAPI.create` goes through the `members` function, which refuses a
+ * non-admin caller anything but the default rung, refuses capability grants in
+ * any shape, and refuses any column that is not the caller's own profile. There
+ * is no first-login shortcut into a grant, on purpose.
+ *
+ * A 409 here is the normal answer for someone an admin has already put on the
+ * roster; `MemberGuard` sends them through `MemberRegistration`, which claims
+ * the waiting row instead of creating a second one. That claim is capped at the
+ * default rung — see the PUT branch of `netlify/functions/members.ts` — so a
+ * row that carries a real rung is linked by an admin rather than by whoever
+ * signs up at its address first.
+ */
+async function syncUserToMembers(supabaseUser: SupabaseUser): Promise<Principal> {
   try {
     // Check if member already exists by user_id (Supabase auth id)
     const existingMember = await membersAPI.getByUserId(supabaseUser.id)
+    if (existingMember) return principalFromMemberRow(existingMember)
 
-    if (!existingMember) {
-      const principal = getPrincipal(supabaseUser)
-      // Create new member record.
-      //
-      // Only the structural role is mirrored onto the roster row. Capabilities
-      // are deliberately not: `members.capabilities` is what the RLS policies
-      // read, the guard trigger in 0015 refuses to let an unprivileged session
-      // set it, and seeding it from auth metadata on first login would be that
-      // session granting itself the thing the trigger exists to withhold.
-      // Capabilities are granted by an admin through the roster, and there is
-      // no first-login shortcut into them on purpose.
-      await membersAPI.create({
-        user_id: supabaseUser.id,
-        email: supabaseUser.email!,
-        name: supabaseUser.user_metadata?.full_name || supabaseUser.user_metadata?.name || supabaseUser.email!,
-        role: principal.role ?? undefined,
-        status: 'active'
-      })
-      console.log('Created new member record for:', supabaseUser.email)
-    }
+    const created = await membersAPI.create({
+      user_id: supabaseUser.id,
+      email: supabaseUser.email!,
+      name: supabaseUser.user_metadata?.full_name || supabaseUser.user_metadata?.name || supabaseUser.email!,
+      status: 'active'
+    })
+    console.log('Created new member record for:', supabaseUser.email)
+    return principalFromMemberRow(created)
   } catch (error) {
     // Don't block login if sync fails - just log the error
     console.error('Failed to sync user to members table:', error)
+    return ANONYMOUS
   }
 }
 
@@ -120,15 +138,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [devRoleIndex, setDevRoleIndex] = useState(0)
 
+  /**
+   * Which session the pending roster lookup belongs to. Bumped whenever the
+   * answer in flight stops being the one we want — a sign-out, or a newer
+   * `adoptSession` — so the late commit can tell that it has been overtaken.
+   */
+  const sessionGeneration = useRef(0)
+
+  /**
+   * The last principal the roster actually answered with, and whose it is.
+   * Placeholder commits are not recorded here; only a landed lookup is.
+   *
+   * It has to be a ref rather than state because `adoptSession` reads it before
+   * deciding what to render, and the auth listener subscribes once, so it sees
+   * `user` from the first render's closure forever. Both refs are refs for that
+   * reason and not for performance.
+   */
+  const resolved = useRef<{ userId: string; principal: Principal } | null>(null)
+
   // Check if authentication should be disabled in development
   const isDevMode = process.env.NODE_ENV === 'development'
   const disableAuthInDev = process.env.NEXT_PUBLIC_DISABLE_AUTH_DEV === 'true'
   const shouldBypassAuth = isDevMode && disableAuthInDev
 
   // Dev users for cycling through roles and capability grants. The evaluator
-  // entry is now a plain member who holds the evaluator capability, which is
-  // the shape the model actually produces — the old entry made "evaluator" a
-  // rung, and testing against it hid the fact that no policy could see it.
+  // entry is a plain member who holds the evaluator capability, which is the
+  // shape the model actually produces — the old entry made "evaluator" a rung,
+  // and testing against it hid the fact that no policy could see it.
+  //
+  // `role` and `capabilities` here stand in for a roster row, which is where a
+  // real session gets both. They carried a matching `app_metadata` block too,
+  // back when that was a second source for the same answer; it is not one now,
+  // and leaving it would suggest otherwise to whoever reads this next.
   const devUsers: User[] = [
     {
       id: 'dev-user-admin',
@@ -136,8 +177,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       name: 'Dev Admin User',
       role: 'admin',
       capabilities: [],
-      user_metadata: { full_name: 'Dev Admin User' },
-      app_metadata: { roles: ['admin'] }
+      user_metadata: { full_name: 'Dev Admin User' }
     },
     {
       id: 'dev-user-executive',
@@ -145,8 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       name: 'Dev Executive User',
       role: 'executive',
       capabilities: [],
-      user_metadata: { full_name: 'Dev Executive User' },
-      app_metadata: { roles: ['executive'] }
+      user_metadata: { full_name: 'Dev Executive User' }
     },
     {
       id: 'dev-user-evaluator',
@@ -154,8 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       name: 'Dev Evaluator User',
       role: 'member',
       capabilities: ['evaluator'],
-      user_metadata: { full_name: 'Dev Evaluator User' },
-      app_metadata: { roles: ['member'], capabilities: ['evaluator'] }
+      user_metadata: { full_name: 'Dev Evaluator User' }
     },
     {
       id: 'dev-user-member',
@@ -163,23 +201,96 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       name: 'Dev Member User',
       role: 'member',
       capabilities: [],
-      user_metadata: { full_name: 'Dev Member User' },
-      app_metadata: { roles: ['member'] }
+      user_metadata: { full_name: 'Dev Member User' }
     }
   ]
 
-  // Convert Supabase user to our User type
-  const mapSupabaseUser = (sbUser: SupabaseUser): User => {
-    const principal = getPrincipal(sbUser)
-    return {
-      id: sbUser.id,
-      email: sbUser.email!,
-      name: sbUser.user_metadata?.full_name || sbUser.user_metadata?.name || sbUser.email!,
-      role: principal.role ?? 'member',
-      capabilities: principal.capabilities,
-      user_metadata: sbUser.user_metadata,
-      app_metadata: sbUser.app_metadata
-    }
+  // Convert Supabase user to our User type. The principal is supplied rather
+  // than derived here: it comes off the roster row, which is a fetch, so this
+  // stays the pure part.
+  const mapSupabaseUser = (sbUser: SupabaseUser, principal: Principal): User => ({
+    id: sbUser.id,
+    email: sbUser.email!,
+    name: sbUser.user_metadata?.full_name || sbUser.user_metadata?.name || sbUser.email!,
+    role: principal.role,
+    capabilities: principal.capabilities,
+    user_metadata: sbUser.user_metadata,
+    app_metadata: sbUser.app_metadata
+  })
+
+  /** Drop the session entirely, and retire anything still resolving for it. */
+  const clearUser = () => {
+    resolved.current = null
+    sessionGeneration.current++
+    setSupabaseUser(null)
+    setUser(null)
+    setIsLoading(false)
+  }
+
+  /**
+   * Take up a session: show whatever the roster last said about this account,
+   * then re-read the roster and correct it.
+   *
+   * ## Never a roleless render of a known account
+   *
+   * The first commit carries the already-resolved principal forward when the
+   * session belongs to the account already on screen. That is not an optimistic
+   * guess — it is the last answer the roster gave, so it is never more
+   * permissive than the roster, and the fetch below replaces it either way.
+   *
+   * Committing `ANONYMOUS` here unconditionally is what the first version did,
+   * and it is wrong on the re-resolution paths. `TOKEN_REFRESHED` fires on every
+   * open tab roughly hourly and `USER_UPDATED` fires on things as ordinary as a
+   * password change, and both route through here. A render carrying `role: null`
+   * is a render in which `app/portal/admin/page.tsx`, and the mail composer that
+   * guards itself the same way, see `hasRole('executive')` come back false and
+   * call `router.push('/portal')` — so an admin working in the admin dashboard
+   * was thrown out of it about once an hour.
+   *
+   * Downgrades still land, one refresh late rather than instantly. That is the
+   * right side to be late on: the API is the boundary, so a stale tile is a
+   * button that 403s, while a roleless flash is a portal that navigates away
+   * from the page the user is on.
+   *
+   * ## And no roleless render of an unknown one either
+   *
+   * When there is nothing to carry forward — a fresh sign-in — the session is
+   * held `isLoading` until the roster answers. `AuthGuard` spins on that flag
+   * and `app/(auth)/login/page.tsx` waits for it before navigating, so a deep
+   * link to `/portal/admin` lands on a mounted page whose rung is known. Without
+   * it the login page redirected on the roleless commit and the admin page
+   * bounced the user straight back to `/portal`. `isLoading` used to span
+   * `initializeAuth` and nothing else, which is why it covered none of this.
+   *
+   * ## Ordering
+   *
+   * `generation` keeps a correction from outliving the session it belongs to.
+   * Signing out bumps it, and so does the next `adoptSession`, so a roster fetch
+   * that lands late drops its answer instead of resurrecting a signed-out user
+   * or overwriting a newer one. Whichever call is still current clears the
+   * loading flag, and `clearUser` clears it on the way out, so an overtaken call
+   * cannot strand the portal on a spinner.
+   */
+  const adoptSession = async (sbUser: SupabaseUser, { register }: { register: boolean }) => {
+    const generation = ++sessionGeneration.current
+    // Only a landed roster answer counts as something to carry. The placeholder
+    // commit below never records itself, so two adoptions racing on a fresh
+    // session cannot mistake each other's placeholder for a resolved rung.
+    const carried =
+      resolved.current?.userId === sbUser.id ? resolved.current.principal : null
+
+    setSupabaseUser(sbUser)
+    setUser(mapSupabaseUser(sbUser, carried ?? ANONYMOUS))
+    if (!carried) setIsLoading(true)
+
+    const principal = register
+      ? await syncUserToMembers(sbUser)
+      : await resolvePrincipal(sbUser)
+
+    if (sessionGeneration.current !== generation) return
+    resolved.current = { userId: sbUser.id, principal }
+    setUser(mapSupabaseUser(sbUser, principal))
+    setIsLoading(false)
   }
 
   useEffect(() => {
@@ -202,17 +313,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         if (session?.user) {
-          setSupabaseUser(session.user)
-          setUser(mapSupabaseUser(session.user))
           // Set user context for logging
           clientLogger.setUser(session.user.id, session.user.email!)
-          // Sync existing user to members table
-          syncUserToMembers(session.user)
+          // `adoptSession` owns the loading flag from here. It holds it until
+          // the roster answers and clears it then, or leaves it to whichever
+          // later event overtook it. Clearing it here as well would drop the
+          // spinner a round-trip early and hand the portal a roleless user.
+          await adoptSession(session.user, { register: true })
+          return
         }
+
+        setIsLoading(false)
       } catch (error) {
         console.error('Error initializing auth:', error)
         clientLogger.error('auth', 'init_error', 'Error initializing auth', error instanceof Error ? error : undefined)
-      } finally {
         setIsLoading(false)
       }
     }
@@ -234,13 +348,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log('Auth state changed:', event)
 
       if (event === 'SIGNED_IN' && session?.user) {
-        setSupabaseUser(session.user)
-        setUser(mapSupabaseUser(session.user))
         // Set user context for logging
         clientLogger.setUser(session.user.id, session.user.email!)
         clientLogger.info('auth', 'signed_in', `User signed in: ${session.user.email}`)
-        // Sync user to members table on login
-        syncUserToMembers(session.user)
+        // Sync user to members table on login, and take the rung from the row
+        await adoptSession(session.user, { register: true })
 
         // Redirect intentionally NOT done here. The login page owns
         // post-sign-in navigation via its own useEffect — having both
@@ -250,19 +362,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clientLogger.info('auth', 'signed_out', 'User signed out')
         clientLogger.clearUser()
         // `logout()` below does not reload the page, so nothing else in the tab
-        // is torn down — the module-level memo in lib/fileDownload.ts included.
+        // is torn down, the module-level memo in lib/fileDownload.ts included.
         // That memo is keyed to the acting session and so cannot hand the next
         // member a link minted for this one, but the links are of no further use
         // to anybody and sign-out is when to say so.
         clearSignedUrlCache()
-        setSupabaseUser(null)
-        setUser(null)
-      } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-        setSupabaseUser(session.user)
-        setUser(mapSupabaseUser(session.user))
-      } else if (event === 'USER_UPDATED' && session?.user) {
-        setSupabaseUser(session.user)
-        setUser(mapSupabaseUser(session.user))
+        // `clearUser` also retires any roster lookup still in flight. Without
+        // that, signing out while one is pending let its trailing commit put a
+        // signed-in user back on screen with no session behind it, and every
+        // request from there 401s until the next auth event.
+        clearUser()
+      } else if (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        if (!session?.user) return
+        // Re-read the roster rather than trusting the refreshed token. A rung
+        // taken away should stop rendering controls within the hour, and a rung
+        // written into the token by its own holder should render nothing at
+        // all — which is the same code path, so there is only one to get right.
+        await adoptSession(session.user, { register: false })
       }
     }
 
@@ -277,9 +393,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         'Supabase is not configured; treating the session as signed out',
         { reason: error instanceof Error ? error.message : String(error) }
       )
-      setSupabaseUser(null)
-      setUser(null)
-      setIsLoading(false)
+      clearUser()
     }
 
     // Cleanup subscription

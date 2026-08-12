@@ -1,5 +1,5 @@
 import { Handler } from '@netlify/functions'
-import { supabase, getCorsHeaders, errorResponse } from './_shared/handler'
+import { supabase, getCorsHeaders, getPrincipal, errorResponse } from './_shared/handler'
 import { sendEmail } from '../../lib/email'
 import {
   EMAIL_ANNOUNCEMENTS,
@@ -14,7 +14,7 @@ import {
   getCopyrightYear,
   EMAIL_SUBJECTS,
 } from '../../lib/siteConfig'
-import { DEFAULT_STRUCTURAL_ROLE } from '../../lib/roles'
+import { DEFAULT_STRUCTURAL_ROLE, hasRole } from '../../lib/roles'
 
 function generateInviteEmailHtml(inviteUrl: string, name?: string): string {
   return `
@@ -80,8 +80,18 @@ export const handler: Handler = async (event) => {
     return errorResponse({ code: 'unauthorized', headers })
   }
 
-  const callerRole = callerUser.app_metadata?.role || callerUser.user_metadata?.role
-  if (callerRole !== 'admin' && callerRole !== 'Admin') {
+  // Resolved from the roster row. This check used to read
+  // `app_metadata.role || user_metadata.role` inline — its own copy of the
+  // escalation that lived in getPrincipal(), and a worse one to leave behind,
+  // since this endpoint rewrites the roster wholesale.
+  let callerPrincipal
+  try {
+    callerPrincipal = await getPrincipal(callerUser)
+  } catch {
+    return errorResponse({ code: 'server_error', headers })
+  }
+
+  if (!hasRole(callerPrincipal, 'admin')) {
     return errorResponse({ code: 'forbidden', headers })
   }
 

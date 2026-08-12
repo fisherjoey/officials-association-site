@@ -23,8 +23,8 @@ import { SITE_URL } from '../../../lib/siteConfig'
 import {
   can,
   hasRole,
-  toPrincipal,
-  DEFAULT_STRUCTURAL_ROLE,
+  principalFromMemberRow,
+  ANONYMOUS,
   type Capability,
   type Principal,
   type StructuralRole,
@@ -118,8 +118,11 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 export interface AuthUser {
   id: string
   email: string
-  /** Rung on the org ladder. */
-  role: StructuralRole
+  /**
+   * Rung on the org ladder, or `null` for a signed-in account with no roster
+   * row. Null is not "the bottom rung" — see `principalFromMemberRow()`.
+   */
+  role: StructuralRole | null
   /** Capability grants, orthogonal to `role`. */
   capabilities: readonly Capability[]
   /** The two together, for passing to `hasRole()` / `can()` from `lib/roles`. */
@@ -132,6 +135,12 @@ export interface RequestContext {
   supabase: SupabaseClient
   logger: Logger
   user: AuthUser | null
+  /**
+   * Resolve any user's principal, memoised for the life of this request. The
+   * caller's own principal is already on `user.principal` and costs nothing
+   * extra here; this is for handlers that have to ask about somebody else.
+   */
+  resolvePrincipal: (userId: string) => Promise<Principal>
 }
 
 export interface HandlerResponse {
@@ -163,38 +172,109 @@ export interface CreateHandlerOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve a Supabase auth user to a structural role plus capability grants.
+ * Memo for one request. `getPrincipal()` stores the in-flight promise, not the
+ * resolved value, so two callers racing on the same id still make one query.
  *
- * Mirrors `getPrincipal()` in `contexts/AuthContext.tsx`, and has to keep
- * mirroring it: the browser decides which controls to render and this decides
- * whether to answer, so a disagreement is a button that 403s. Both defer to
- * `toPrincipal()` in `lib/roles.ts` so the precedence rules exist once.
- *
- * The `user_metadata` fallback is the known hole in the README (PLAT-33).
- * `user_metadata` is writable by the account itself with a plain authenticated
- * call, so any user without a server-set `app_metadata.role` can name its own.
- * It is preserved here rather than quietly fixed: the fix has to land in both
- * resolvers at once and is tracked separately, and removing it in one place
- * only would desynchronise the layers while looking like progress.
- *
- * The explicit `capabilities` list is read from `app_metadata` and nowhere else.
- * That is narrower than it looks, and is not a boundary: `role` and `roles`
- * below still fall back to `user_metadata`, and `toPrincipal()` derives a
- * capability from either of them, so `user_metadata.role = 'evaluator'` yields
- * a member holding the evaluator grant. PLAT-33 therefore reaches the
- * capability grants as well as the rung. Closing it means dropping the
- * `user_metadata` fallback from the role fields, not just withholding the
- * `capabilities` key from it.
+ * Per request and never per process. A module-level cache would keep a demoted
+ * admin privileged for as long as the Lambda container is warm, which is minutes
+ * to hours and entirely outside anybody's control — a revocation that does not
+ * take effect is a slower version of the bug this file is fixing.
  */
-export function getPrincipal(user: Record<string, any> | null | undefined): Principal {
-  return toPrincipal({
-    role: user?.app_metadata?.role || user?.user_metadata?.role,
-    roles: [
-      ...(user?.app_metadata?.roles ?? []),
-      ...(user?.user_metadata?.roles ?? []),
-    ],
-    capabilities: user?.app_metadata?.capabilities,
-  })
+export type PrincipalCache = Map<string, Promise<Principal>>
+
+export function createPrincipalCache(): PrincipalCache {
+  return new Map()
+}
+
+/** Thrown when the roster lookup fails. Never means "not allowed". */
+export class PrincipalLookupError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PrincipalLookupError'
+  }
+}
+
+/**
+ * Resolve a Supabase auth user to a structural role plus capability grants, by
+ * reading the roster row keyed on their `auth.uid()`.
+ *
+ * ## Why the roster and not the token
+ *
+ * This used to read `app_metadata.role` and fall back to `user_metadata.role`.
+ * `user_metadata` is whatever the account last sent to `PUT /auth/v1/user` — an
+ * ordinary authenticated call, no admin key — so any account without a
+ * server-set `app_metadata.role` could name its own rung, and every self-signup
+ * and every not-yet-stamped invitee was in exactly that state. The capability
+ * half went the same way: `toPrincipal()` reads a capability slug sitting in
+ * the role field, so `{"role": "evaluator"}` bought every evaluation in the
+ * association.
+ *
+ * Dropping the `user_metadata` half would have closed that, and left
+ * `app_metadata` as the source of truth — a second copy of the roster that
+ * somebody has to keep in step with `members.role` by hand, forever, with an
+ * escalation on the day they forget. So the answer comes from the roster
+ * instead. `members.role` and `members.capabilities` are the columns the RLS
+ * policies already key on, and no browser session can write them:
+ * `authenticated` has no UPDATE grant on `members`, and the guard trigger in
+ * migration 0015 refuses the write even if someone re-grants one. The function
+ * layer and the database now answer from the same two columns, so they agree by
+ * construction rather than by discipline.
+ *
+ * What that argument does not cover, and what has to be checked by hand, is
+ * `netlify/functions/members`: it is the write path for these columns, it holds
+ * the service-role key, and neither barrier above applies to it. The rule it
+ * enforces instead is written down there — see `SELF_SERVICE_COLUMNS` and
+ * `conveysNothingBeyondTheDefault()`. Any future endpoint that writes `role`,
+ * `capabilities` or `user_id` on somebody's behalf inherits that obligation.
+ *
+ * `contexts/AuthContext.tsx` resolves the browser's view of the same question
+ * and reads the same columns through the same `principalFromMemberRow()`.
+ *
+ * ## What it costs
+ *
+ * One indexed lookup (`idx_members_user_id`) of two columns per authenticated
+ * request. `createHandler` resolves it once, before the auth gate, and hands the
+ * result to the handler on `ctx.user.principal`; a handler that needs somebody
+ * else's principal goes through `ctx.resolvePrincipal`, which shares this
+ * request's memo. Nothing caches across requests — see `PrincipalCache`.
+ *
+ * ## Failure
+ *
+ * A failed lookup throws rather than resolving to nobody. Both are refusals, but
+ * only one of them is honest: "the roster is unreachable" is a 500, and calling
+ * it a 403 would send an admin off hunting for a permission problem that does
+ * not exist.
+ */
+export async function getPrincipal(
+  user: { id?: string | null } | null | undefined,
+  cache?: PrincipalCache,
+  client: SupabaseClient = supabase
+): Promise<Principal> {
+  const userId = user?.id
+  if (!userId) return ANONYMOUS
+
+  const inFlight = cache?.get(userId)
+  if (inFlight) return inFlight
+
+  const pending = readRosterRow(userId, client)
+  cache?.set(userId, pending)
+  return pending
+}
+
+async function readRosterRow(userId: string, client: SupabaseClient): Promise<Principal> {
+  const { data, error } = await client
+    .from('members')
+    .select('role, capabilities')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error) {
+    throw new PrincipalLookupError(`Could not resolve the caller's roster row: ${error.message}`)
+  }
+
+  // `data` is null for a signed-in account with no roster row. That resolves to
+  // nobody, not to a member — the registration screen exists for that state.
+  return principalFromMemberRow(data)
 }
 
 /** Check whether a principal satisfies a given auth level */
@@ -379,6 +459,12 @@ export function createHandler(options: CreateHandlerOptions): Handler {
     }
 
     // --- Auth ---
+    // One memo per invocation, handed to the handler as `resolvePrincipal` so
+    // nothing in this request pays for the same roster row twice — and nothing
+    // outside it reuses the answer.
+    const principals = createPrincipalCache()
+    const resolvePrincipal = (userId: string) => getPrincipal({ id: userId }, principals)
+
     const authLevel = getAuthLevel(auth, event.httpMethod)
     let user: AuthUser | null = null
 
@@ -395,11 +481,26 @@ export function createHandler(options: CreateHandlerOptions): Handler {
         return errorResponse({ code: 'unauthorized', headers: corsHeaders })
       }
 
-      const principal = getPrincipal(authUser)
+      let principal: Principal
+      try {
+        principal = await resolvePrincipal(authUser.id)
+      } catch (error) {
+        // The roster is unreachable, so we cannot say who this is. That is a
+        // server fault and is reported as one — a 403 here would blame the
+        // caller for our outage.
+        logger.error(
+          'api',
+          `${name}_principal_lookup_failed`,
+          `${name} could not resolve the caller's principal`,
+          error instanceof Error ? error : new Error(String(error))
+        )
+        return errorResponse({ code: 'server_error', headers: corsHeaders })
+      }
+
       user = {
         id: authUser.id,
         email: authUser.email || 'unknown',
-        role: principal.role ?? DEFAULT_STRUCTURAL_ROLE,
+        role: principal.role,
         capabilities: principal.capabilities,
         principal,
         raw: authUser as unknown as Record<string, any>,
@@ -412,7 +513,7 @@ export function createHandler(options: CreateHandlerOptions): Handler {
 
     // --- Run handler ---
     try {
-      const result = await handlerFn({ event, supabase, logger, user })
+      const result = await handlerFn({ event, supabase, logger, user, resolvePrincipal })
 
       return {
         ...result,

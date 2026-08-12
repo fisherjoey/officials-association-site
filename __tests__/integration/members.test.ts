@@ -25,13 +25,13 @@ import {
 } from './helpers/auth'
 
 /**
- * Inline minimal-row seeder. The shared `seedMember` helper insists on
- * setting a `rank` column that the deployed `members` schema does not
- * have, which would 500 us before the PUT handler even runs. We seed
- * directly via the admin client instead — read-only contract on the
- * helper preserved.
+ * Reset the roster row `createTestUser` already made for this user, so each
+ * test starts from a known row without deleting the one that gives the user
+ * their rung. It used to insert a fresh row; that is a unique-key violation now
+ * that every test user arrives on the roster, and deleting instead would strip
+ * the admin of the rung `getPrincipal()` resolves from.
  */
-async function seedMemberRow(
+async function resetMemberRow(
   user: TestUser,
   name: string,
   extra: Record<string, unknown> = {}
@@ -39,18 +39,20 @@ async function seedMemberRow(
   const sb = getSupabaseAdmin()
   const { data, error } = await sb
     .from('members')
-    .insert({
-      user_id: user.id,
-      email: user.email,
+    .update({
       name,
       role: user.structuralRole,
       capabilities: user.capabilities,
       status: 'active',
+      phone: null,
+      city: null,
+      certification_level: null,
       ...extra,
     })
+    .eq('user_id', user.id)
     .select('id')
     .single()
-  if (error) throw new Error(`seedMemberRow failed: ${error.message}`)
+  if (error) throw new Error(`resetMemberRow failed: ${error.message}`)
   return data as { id: string }
 }
 
@@ -86,12 +88,8 @@ describe('members PUT', () => {
   let memberB: { id: string }
 
   beforeEach(async () => {
-    memberA = await seedMemberRow(officialA, tag('OfficialA'))
-    memberB = await seedMemberRow(officialB, tag('OfficialB'))
-  })
-
-  afterEach(async () => {
-    await cleanupMembersRows()
+    memberA = await resetMemberRow(officialA, tag('OfficialA'))
+    memberB = await resetMemberRow(officialB, tag('OfficialB'))
   })
 
   it('returns 401 without a bearer token', async () => {

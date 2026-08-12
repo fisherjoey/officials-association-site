@@ -225,15 +225,15 @@ export const canViewAllEvaluations = (principal: Principal | null | undefined): 
   isAdminOrExecutive(principal) || can(principal, 'evaluator')
 
 // ---------------------------------------------------------------------------
-// Building a principal from stored metadata
+// Building a principal from stored roles
 // ---------------------------------------------------------------------------
 
 export interface RoleSource {
-  /** A single role name — `app_metadata.role`, `members.role`. */
+  /** A single role name — `members.role`. */
   role?: unknown
-  /** A list of role names, the older shape — `app_metadata.roles`. */
+  /** A list of role names, the older shape. Not a source of privilege today. */
   roles?: unknown
-  /** Capability grants — `members.capabilities`, `app_metadata.capabilities`. */
+  /** Capability grants — `members.capabilities`. */
   capabilities?: unknown
 }
 
@@ -268,9 +268,12 @@ function highestStructural(values: unknown): StructuralRole | null {
  * of those accounts to admin as a side effect of a refactor.
  *
  * `capabilities` is additive and is read from whichever source won, plus the
- * explicit list. Callers decide which metadata bag to read it from — see the
- * note in `netlify/functions/_shared/handler.ts` about why capabilities are
- * taken from `app_metadata` only.
+ * explicit list.
+ *
+ * `fallback` is what an unrecognised or absent role resolves to. Callers
+ * resolving a real person pass `null` through `principalFromMemberRow()` below;
+ * the `'member'` default is kept for the display-only callers that are already
+ * looking at a roster row and only want its rung named.
  */
 export function toPrincipal(
   source: RoleSource | null | undefined,
@@ -302,6 +305,42 @@ export function toPrincipal(
   }
 
   return { role, capabilities: granted }
+}
+
+/** The two columns a roster row has to carry for anyone to be anyone. */
+export interface MemberRoleRow {
+  role?: unknown
+  capabilities?: unknown
+}
+
+/**
+ * Who a roster row says this person is. **The only way to become somebody.**
+ *
+ * `members.role` and `members.capabilities` are the columns the RLS policies
+ * read — through `structural_role()` and `has_capability()` in migration 0015 —
+ * and no browser session can write either one: `authenticated` holds no UPDATE
+ * grant on `members`, and the guard trigger refuses the write even if someone
+ * re-grants one. Resolving the function layer from the same two columns is what
+ * makes the two layers agree without anybody keeping them in step.
+ *
+ * The one write path that reaches these columns is `netlify/functions/members`,
+ * which holds the service-role key and is therefore outside both barriers. It
+ * has to enforce the rule itself, and the whole of it lives in one place:
+ * `SELF_SERVICE_COLUMNS` there names what a non-admin may write on their own
+ * row, and `conveysNothingBeyondTheDefault()` caps what claiming an unlinked
+ * row can hand over. `members.user_id` belongs to that list too — it is the
+ * column that binds a rung to a person, so writing it is a privilege write even
+ * though it holds neither privilege itself.
+ *
+ * A missing row is `ANONYMOUS`, not a member. Being signed in is not a rung:
+ * that state is a real one — `MemberGuard` renders the registration form for
+ * exactly it — and a person who has not been put on the roster has not been
+ * given anything yet. The SQL side says the same thing; `structural_role()`
+ * returns NULL for a caller with no row.
+ */
+export function principalFromMemberRow(row: MemberRoleRow | null | undefined): Principal {
+  if (!row) return ANONYMOUS
+  return toPrincipal(row, null)
 }
 
 // ---------------------------------------------------------------------------

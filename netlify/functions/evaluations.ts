@@ -37,10 +37,12 @@ export const handler = createHandler({
     const principal: Principal = user!.principal
     const userEmail = user!.email
     // Audit lines record the rung and the grants, not just the rung. "member"
-    // alone no longer explains why a request was allowed through.
+    // alone no longer explains why a request was allowed through, and `none` is
+    // a real answer — a signed-in account with no roster row has no rung.
+    const rung = user!.role ?? 'none'
     const userRole = user!.capabilities.length > 0
-      ? `${user!.role}+${user!.capabilities.join('+')}`
-      : user!.role
+      ? `${rung}+${user!.capabilities.join('+')}`
+      : rung
 
     switch (event.httpMethod) {
       case 'GET': {
