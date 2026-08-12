@@ -6,6 +6,12 @@
  *
  * Note: This is legacy infrastructure from before the Supabase Auth migration.
  * New signups go through supabase-auth-admin.ts instead.
+ *
+ * The `app_metadata.role` this hands back confers nothing. Roles are resolved
+ * from `members.role` now — see `getPrincipal()` in `_shared/handler.ts` — and
+ * this webhook's response shape is fixed by Netlify Identity, which no longer
+ * runs here. It is left as-is because rewriting a dead contract to write a
+ * column it was never able to reach would be worse than leaving it inert.
  */
 
 import { Handler } from '@netlify/functions'

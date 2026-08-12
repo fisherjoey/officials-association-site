@@ -1,7 +1,7 @@
 import { Handler } from '@netlify/functions'
 import busboy from 'busboy'
 import { supabase, getPrincipal, errorResponse } from './_shared/handler'
-import { hasRole } from '../../lib/roles'
+import { hasRole, type Principal } from '../../lib/roles'
 import { Logger } from '../../lib/logger'
 import { SITE_URL } from '../../lib/siteConfig'
 import { isPublicBucket, toStorageRef } from '../../lib/storageRefs'
@@ -47,7 +47,23 @@ export const handler: Handler = async (event): Promise<{ statusCode: number; hea
     return errorResponse({ code: 'unauthorized', headers })
   }
 
-  const principal = getPrincipal(authUser)
+  // Resolved from the roster row, not from the token — see getPrincipal(). This
+  // handler predates createHandler and does its own auth, so it also does its
+  // own lookup; there is one request in flight here, so a cache would have
+  // nothing to save.
+  let principal: Principal
+  try {
+    principal = await getPrincipal(authUser)
+  } catch (err) {
+    logger.error(
+      'file',
+      'principal_lookup_failed',
+      'Could not resolve the caller principal',
+      err instanceof Error ? err : new Error(String(err))
+    )
+    return errorResponse({ code: 'server_error', headers })
+  }
+
   const userRole = principal.role
   const userEmail = authUser.email || 'unknown'
   const isPrivileged = hasRole(principal, 'executive')

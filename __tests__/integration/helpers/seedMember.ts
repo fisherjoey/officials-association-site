@@ -1,7 +1,12 @@
 /**
- * Seed a `members` table row tied to an auth user. Several portal
- * functions (members PUT, evaluations, member_activities) require the
- * caller to have an existing members row keyed by user_id or email.
+ * Shape a `members` row tied to an auth user.
+ *
+ * `createTestUser` already puts every test user on the roster — it has to, now
+ * that `getPrincipal()` reads the rung from there — so this helper's job is to
+ * amend that row rather than to create one, and it returns the row's id, which
+ * is what the callers that need an FK target (evaluations, member_activities)
+ * were really after. It still inserts when the row is absent, so a caller that
+ * built its user with `{ roster: false }` gets the old behaviour.
  */
 import { getSupabaseAdmin } from './supabase'
 import type { TestUser } from './auth'
@@ -45,11 +50,19 @@ export async function seedMember(
   }
 
   const sb = getSupabaseAdmin()
-  const { data, error } = await sb
+
+  const { data: existing, error: lookupError } = await sb
     .from('members')
-    .insert(insert)
-    .select('id, user_id, email, name')
-    .single()
+    .select('id')
+    .eq('user_id', user.id)
+    .maybeSingle()
+  if (lookupError) throw new Error(`seedMember lookup failed: ${lookupError.message}`)
+
+  const query = existing
+    ? sb.from('members').update(insert).eq('id', existing.id)
+    : sb.from('members').insert(insert)
+
+  const { data, error } = await query.select('id, user_id, email, name').single()
   if (error) throw new Error(`seedMember failed: ${error.message}`)
   return data as SeededMember
 }

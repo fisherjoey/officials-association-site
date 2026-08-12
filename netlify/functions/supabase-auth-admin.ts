@@ -1,7 +1,7 @@
 import { Handler } from '@netlify/functions'
-import { supabase as supabaseAdmin, getCorsHeaders, listAllAuthUsers, findAuthUserByEmail, errorResponse } from './_shared/handler'
+import { supabase as supabaseAdmin, getCorsHeaders, getPrincipal, listAllAuthUsers, findAuthUserByEmail, errorResponse } from './_shared/handler'
 import { checkRateLimit, getClientIp } from './_shared/rateLimit'
-import { DEFAULT_STRUCTURAL_ROLE } from '../../lib/roles'
+import { DEFAULT_STRUCTURAL_ROLE, hasRole, principalFromMemberRow } from '../../lib/roles'
 import { randomBytes } from 'crypto'
 import { Logger } from '../../lib/logger'
 import { recordInviteEmail, recordPasswordResetEmail } from '../../lib/emailHistory'
@@ -77,8 +77,41 @@ export interface AuthUser {
   confirmed_at?: string
   invited_at?: string
   created_at?: string
+  /**
+   * Rung from the roster row, absent when the account has no row. This used to
+   * be `app_metadata.role || user_metadata.role`; both are now ignored by the
+   * gate, so reporting either would describe a privilege nobody has.
+   */
   role?: string
-  roles?: string[]
+  capabilities?: string[]
+}
+
+/**
+ * Roster rungs for a batch of auth users, in one query. `user_id` is unique on
+ * `members`, so the map is one row per id at most and an absent id means the
+ * account has never been put on the roster.
+ */
+async function readRoster(
+  userIds: string[]
+): Promise<Map<string, { role: string | null; capabilities: string[] }>> {
+  const out = new Map<string, { role: string | null; capabilities: string[] }>()
+  if (userIds.length === 0) return out
+
+  const { data, error } = await supabaseAdmin
+    .from('members')
+    .select('user_id, role, capabilities')
+    .in('user_id', userIds)
+
+  if (error) throw new Error(`Failed to read roster roles: ${error.message}`)
+
+  for (const row of data ?? []) {
+    const principal = principalFromMemberRow(row)
+    out.set(row.user_id, {
+      role: principal.role,
+      capabilities: [...principal.capabilities],
+    })
+  }
+  return out
 }
 
 // ============================================================================
@@ -365,9 +398,16 @@ export const handler: Handler = async (event) => {
       return errorResponse({ code: 'unauthorized', headers })
     }
 
-    // Check if caller has admin role
-    const callerRole = callerUser.app_metadata?.role || callerUser.user_metadata?.role
-    if (callerRole !== 'admin' && callerRole !== 'Admin') {
+    // Check if caller has admin role. Resolved from the roster row, not from
+    // the token: this check used to read `app_metadata.role ||
+    // user_metadata.role` inline, which is the same escalation getPrincipal()
+    // carried and the most dangerous copy of it — this endpoint invites users,
+    // deletes them and changes their rung.
+    const callerPrincipal = await getPrincipal(callerUser)
+    // Undefined rather than null so it drops out of audit payloads instead of
+    // recording a rung of "null". Past the guard below it is always 'admin'.
+    const callerRole = callerPrincipal.role ?? undefined
+    if (!hasRole(callerPrincipal, 'admin')) {
       logger.warn('auth', 'forbidden_access', 'Non-admin attempted admin operation', {
         userEmail: callerUser.email,
         metadata: { role: callerRole }
@@ -389,6 +429,11 @@ export const handler: Handler = async (event) => {
         if (action === 'list') {
           const users = await listAllAuthUsers(supabaseAdmin)
 
+          // Roles come off the roster, in one query rather than one per user.
+          // Reporting `app_metadata.role` here would print a field nothing
+          // authorises on any more — a screen that disagrees with the gate.
+          const roster = await readRoster(users.map(u => u.id))
+
           const mappedUsers: AuthUser[] = users.map(user => ({
             id: user.id,
             email: user.email!,
@@ -397,8 +442,8 @@ export const handler: Handler = async (event) => {
             confirmed_at: user.email_confirmed_at || undefined,
             invited_at: user.invited_at || undefined,
             created_at: user.created_at,
-            role: user.app_metadata?.role || user.user_metadata?.role,
-            roles: user.app_metadata?.roles || user.user_metadata?.roles || []
+            role: roster.get(user.id)?.role ?? undefined,
+            capabilities: roster.get(user.id)?.capabilities ?? []
           }))
 
           return {
@@ -420,6 +465,8 @@ export const handler: Handler = async (event) => {
             }
           }
 
+          const principal = await getPrincipal(user)
+
           return {
             statusCode: 200,
             headers,
@@ -432,8 +479,8 @@ export const handler: Handler = async (event) => {
               confirmed_at: user.email_confirmed_at,
               invited_at: user.invited_at,
               created_at: user.created_at,
-              role: user.app_metadata?.role || user.user_metadata?.role,
-              roles: user.app_metadata?.roles || user.user_metadata?.roles || []
+              role: principal.role ?? undefined,
+              capabilities: principal.capabilities
             })
           }
         }
@@ -831,11 +878,44 @@ export const handler: Handler = async (event) => {
           metadata: { targetUserId: userId, role, name }
         })
 
-        const updates: any = {}
-
+        // A rung is a roster column now, so this writes `members.role` rather
+        // than `app_metadata.role`. Writing the metadata would have kept
+        // returning 200 while conferring nothing, which is the worst possible
+        // shape for a privilege change: an admin who thinks the promotion
+        // landed and a user who never got it.
         if (role) {
-          updates.app_metadata = { role }
+          const { data: updatedRows, error: roleError } = await supabaseAdmin
+            .from('members')
+            .update({ role })
+            .eq('user_id', userId)
+            .select('id')
+
+          if (roleError) {
+            logger.error('auth', 'update_role_failed', `Failed to set role for ${userId}`, new Error(roleError.message))
+            return errorResponse({
+              code: 'server_error',
+              headers,
+              message: 'We couldn’t update that user. Please try again.',
+              extra: { success: false },
+            })
+          }
+
+          if (!updatedRows || updatedRows.length === 0) {
+            logger.warn('auth', 'update_role_no_member', `No roster row for auth user ${userId}`, {
+              userEmail: callerUser.email,
+              metadata: { targetUserId: userId, role }
+            })
+            return errorResponse({
+              code: 'invalid_input',
+              headers,
+              statusCode: 404,
+              message: 'That account is not on the member roster yet, so it has no role to change.',
+              extra: { success: false },
+            })
+          }
         }
+
+        const updates: any = {}
 
         if (name) {
           updates.user_metadata = { full_name: name, name }

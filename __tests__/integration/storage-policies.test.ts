@@ -29,11 +29,12 @@
  * `netlify/functions/upload-file.ts` holds the service-role key and bypasses
  * RLS entirely; its own role gate is covered in upload-file.test.ts.
  *
- * Per the project's PATTERN.md the shared helpers are left alone. The one
- * thing this suite needs that `helpers/auth.ts` does not do is a
- * `public.members` row: `createTestUser` sets `app_metadata.role`, which is
- * what the function layer reads, while `is_admin_or_executive()` reads
- * `members.role`. The local `linkMemberRow` below covers that gap.
+ * The users come from `helpers/auth.ts` unmodified. `createTestUser` puts each
+ * one on the roster at the rung its name asks for, which is what these policies
+ * read: `is_admin_or_executive()` answers from `members.role`. This file used
+ * to seed that row itself, because the helper stamped `app_metadata.role` and
+ * the function layer read the metadata while the policies read the roster —
+ * two sources for one question. There is one now.
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { E2E_TAG, getSupabaseAdmin } from './helpers/supabase'
@@ -74,21 +75,6 @@ function clientFor(token?: string): SupabaseClient {
     auth: { persistSession: false, autoRefreshToken: false },
     global: token ? { headers: { Authorization: `Bearer ${token}` } } : {},
   })
-}
-
-/**
- * `is_admin_or_executive()` answers from `public.members.role`, so a test
- * user without a members row is a plain caller no matter what its JWT says.
- */
-async function linkMemberRow(user: TestUser, role: string): Promise<void> {
-  const sb = getSupabaseAdmin()
-  const { error } = await sb.from('members').insert({
-    user_id: user.id,
-    email: user.email,
-    name: `E2E ${role}`,
-    role,
-  })
-  if (error) throw new Error(`linkMemberRow failed for ${role}: ${error.message}`)
 }
 
 /** Write an object as the service role, bypassing the policies under test. */

@@ -164,7 +164,7 @@ export default function ProfilePage() {
     setFieldErrors({})
   }
 
-  const getRoleBadgeColor = (role: string) => {
+  const getRoleBadgeColor = (role: string | null) => {
     switch (normalizeStructuralRole(role)) {
       case 'admin': return 'bg-red-100 text-red-800'
       case 'executive': return 'bg-purple-100 text-purple-800'

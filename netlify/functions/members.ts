@@ -427,28 +427,13 @@ export const handler = createHandler({
 
         if (error) throw error
 
-        // If role or capabilities changed, mirror them onto the auth user's
-        // app_metadata. The function layer resolves a caller's principal from
-        // that metadata while the RLS policies read the roster row, so a
-        // roster change that is not mirrored leaves the two layers disagreeing
-        // — the database would let an evaluator read and the function would
-        // not. `updateUserById` merges at the top level of app_metadata, so
-        // sending one key does not clear the other.
-        if ((updates.role || updates.capabilities) && data.user_id) {
-          const appMetadata: Record<string, unknown> = {}
-          if (updates.role) appMetadata.role = updates.role
-          if (updates.capabilities) appMetadata.capabilities = updates.capabilities
-          try {
-            await supabase.auth.admin.updateUserById(data.user_id, {
-              app_metadata: appMetadata
-            })
-            logger.info('crud', 'role_sync_success', `Synced role to auth for user ${data.user_id}`, {
-              metadata: { userId: data.user_id, newRole: updates.role, newCapabilities: updates.capabilities }
-            })
-          } catch (authError) {
-            logger.error('crud', 'role_sync_failed', `Failed to sync role to auth for user ${data.user_id}`, authError instanceof Error ? authError : new Error(String(authError)))
-          }
-        }
+        // There is no longer a copy of the rung to keep in step. This used to
+        // mirror `role` and `capabilities` onto the auth user's app_metadata,
+        // because the function layer resolved principals from there while RLS
+        // read the roster row, and an unmirrored roster change left the two
+        // disagreeing. Both layers read the roster row now, so the write above
+        // is the whole change — and the mirror, being a second copy that could
+        // fall behind, was the thing worth deleting rather than maintaining.
 
         await logger.audit('UPDATE', 'member', id, {
           actorId: callerId,

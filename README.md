@@ -12,8 +12,9 @@ official sees. The portal behind the login is where the association runs itself.
 This is a template, not a product. There is no hosted version, no support and no upgrade
 path. You fork it, rebrand it, and it becomes your codebase.
 
-**Read [Known gaps](#known-gaps) before you deploy this.** One of them is an authorisation
-hole a stranger can walk through, and it is not fixed.
+**Read [Known gaps](#known-gaps) before you deploy this.** None of them will stop you standing
+the site up. One of them breaks the portal's download links, and that is better to know now
+than to hear from a member.
 
 ---
 
@@ -358,9 +359,66 @@ letting the policy quietly stop matching.
 The structural ladder is enumerated by a CHECK constraint, so renaming one of those three is a
 migration. They are the org chart, so that should be rare.
 
-`official` was the old name for `member`. It is still accepted on the way in, so an auth user
-carrying `app_metadata.role = 'official'` resolves to a member, but it is no longer a value
-the database will store.
+`official` was the old name for `member`. It is still accepted on the way in, so a roster row
+carrying `role = 'official'` resolves to a member, but it is no longer a value the database
+will store.
+
+### Where a role comes from
+
+A person's rung and their grants live in `members.role` and `members.capabilities`, and in no
+other place.
+
+Both enforcement layers read those two columns. The RLS policies reach them through
+`structural_role()` and `has_capability()`. The Netlify Functions reach them through
+`getPrincipal()` in `netlify/functions/_shared/handler.ts`, which looks up the caller's roster
+row by `auth.uid()`. The browser reads them through the same `principalFromMemberRow()` helper
+in `lib/roles.ts`, so the tiles the portal renders and the requests the API answers are working
+from one row. There is a single copy, so there is nothing to keep in step.
+
+Neither column can be written from a browser session. `authenticated` holds no UPDATE grant on
+`members` at all, and a trigger refuses any change to `role`, `capabilities` or `user_id` from
+an unprivileged session, in case somebody re-grants UPDATE later to support profile editing.
+The auth user's `app_metadata` and `user_metadata` are not consulted for authorisation.
+`user_metadata` least of all: it holds whatever the account last sent to `PUT /auth/v1/user`,
+an ordinary authenticated call that any signed-in user can make about themselves.
+
+A signed-in account with no roster row has no rung and no grants. That state is a normal part
+of the flow rather than a fault. It is what someone accepting an invitation or signing up on
+their own looks like before they register, and `MemberGuard` renders the registration form for
+exactly that case. It resolves to nobody rather than to the bottom rung, so a stranger holding
+an account reaches the portal shell and nothing behind it. The SQL side answers the same way:
+`structural_role()` returns NULL for a caller with no row.
+
+The cost is one indexed two-column lookup per authenticated request. `createHandler` resolves
+it once, before the auth gate, and hands the answer to the handler. Nothing is cached between
+requests, deliberately. A warm Lambda container lives for minutes or hours, and a cached rung
+would keep a demoted admin privileged for that whole time.
+
+This is worth spelling out because it used to work the other way, and that version was a hole
+an adopter could walk into. `getPrincipal()` read `app_metadata.role` and fell back to
+`user_metadata.role`. Every self-signup and every invited user before an admin stamped a role
+on them had no `app_metadata.role`, so the fallback decided, and the fallback is a field the
+account writes for itself:
+
+```
+signup  ->  PUT /auth/v1/user {"data": {"role": "admin"}}  ->  refresh the token
+```
+
+Three ordinary calls, and the account read the entire member roster, every evaluation, every
+contact submission and the system logs. The capability half went the same way: `evaluator` in
+place of `admin` bought every evaluation in the association. Row-level security was never the
+problem. The policies keyed on `members.role` and they held. The functions carry the
+service-role key, so RLS never applies to them, and their own check was the only thing standing
+there.
+
+Dropping the `user_metadata` fallback would have closed that and left `app_metadata` as the
+source of truth: a second copy of the roster for somebody to keep in step by hand, forever,
+with an escalation waiting on the day they forgot. Reading the roster instead means the two
+layers agree because they are looking at the same thing.
+
+`__tests__/integration/principal-escalation.test.ts` runs the sequence above against a live
+stack and fails if it ever works again. `__tests__/unit/security/principalResolution.test.ts`
+pins the resolver to the roster without needing a database.
 
 ### Auth configuration
 
@@ -372,14 +430,12 @@ Add `<your origin>/auth/callback` to **Redirect URLs**. `getAuthCallbackUrl()` i
 `lib/siteConfig.ts` builds that path and takes no arguments on purpose. Threading user input
 into it turns the login flow into an open redirect through Supabase's allow-listed domain.
 
-Turn off self-service signup, unless you have read [Known gaps](#known-gaps) and fixed the
-role-resolution hole. With signup on, anyone can create an account and then grant themselves
-admin.
+Self-service signup is your call. Leaving it on lets anyone create an account and get past the
+login page, but it does not let them reach anything inside: a new account has no roster row, so
+it has no rung and no grants, and every function refuses it until an admin adds them to the
+roster. Turn it off if your association only ever admits people by invitation.
 
-Roles live in the auth user's `app_metadata` and are mirrored onto the roster row.
-`app_metadata.role` is the structural rung (`member`, `executive`, `admin`) and
-`app_metadata.capabilities` is an array of grants (`evaluator`, `scheduler`, `instructor`,
-`assignor`, `mentor`). Only the service role can write `app_metadata`.
+Roles are not stored on the auth user. See [Where a role comes from](#where-a-role-comes-from).
 
 ---
 
@@ -700,47 +756,7 @@ functions have to be configured in the dashboard; it will not run on its own.
 These are real and unfixed. An adopter finding them out later is the outcome this section
 exists to prevent.
 
-### Role resolution trusts user-writable metadata, and this is a blocker
-
-`getPrincipal()` in `netlify/functions/_shared/handler.ts` reads the caller's role from
-`app_metadata.role` first and falls back to `user_metadata.role`. `app_metadata` is
-server-controlled. `user_metadata` is written by the user, with an ordinary authenticated
-call to Supabase's `PUT /auth/v1/user`.
-
-So any account that does not already carry a server-set `app_metadata.role`, which means
-every self-signup and every invited user before an admin stamps a role on them, can make
-itself an administrator of every Netlify Function:
-
-```
-signup  ->  PUT /auth/v1/user {"data": {"role": "admin"}}  ->  refresh the token
-```
-
-Verified against a local stack. After those three calls a brand-new account read the entire
-member roster (names, emails, phone numbers, addresses, emergency contacts), every
-evaluation, every contact submission and the system logs.
-
-Row-level security is not the hole. The policies in `supabase/migrations/` are written
-against `members.role` and `members.capabilities`, neither of which a user can change, and
-they hold: a plain member querying PostgREST directly sees only their own member row and
-their own evaluations. The hole is that the functions run with the service-role key, RLS
-never applies to them, and their own role check is the only thing standing there.
-
-The capabilities are reachable the same way. `getPrincipal()` takes the literal
-`capabilities` key from `app_metadata` only, but it reads `role` and `roles` from
-`user_metadata` too, and a capability slug sitting in either of those resolves to a member
-holding that grant. Send `{"data": {"role": "evaluator"}}` in place of `admin` above and the
-account reads every evaluation in the association, because `netlify/functions/evaluations.ts`
-holds the same service-role key. Admin is still the worse outcome, but not because the
-capability half is protected.
-
-Until it is fixed, turn off self-service signup in Supabase Auth and set
-`app_metadata.role` on every user through the service role. The fix itself is to stop
-reading `user_metadata` for `role` and `roles`, in `getPrincipal()` in
-`netlify/functions/_shared/handler.ts` and in `contexts/AuthContext.tsx`, which carries the
-same fallback. Both fields feed the rung and the capability grants, so dropping the fallback
-closes both. Tracked as PLAT-33.
-
-### `access_level` on a resource gates the row, not the file
+### Downloads from the private buckets need signed URLs
 
 `resources.access_level` restricts who sees a resource in the list. It does not restrict the
 object. Keys in `portal-resources` are a bare `<timestamp>-<name>` with nothing tying them to

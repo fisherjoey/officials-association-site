@@ -447,27 +447,37 @@ describe('send-email — admin happy paths', () => {
     }
   })
 
-  // BUG probe: the auth gate checks app_metadata.role === 'admin'. A user
-  // with role !== 'admin' but with members.role === 'admin' (out-of-band
-  // privilege via the DB) should NOT be able to bulk-email. This
-  // specifically guards the "official with rank but role=admin in members"
-  // confusion the prompt called out — only auth metadata should matter.
-  it('a non-admin auth user cannot bulk-email even if their members row says admin', async () => {
-    // adminMemberA was created with auth role 'admin'. Recreate the
-    // scenario by reusing `official` (auth=official) with a members row
-    // tagged as admin. Use upsert via a fresh seeded row keyed by email.
+  // This probe used to run the other way round: it set `members.role = 'admin'`
+  // on a plain member and asserted a 403, on the rule that only auth metadata
+  // decided anything. That rule is gone, and it was the bug — auth metadata
+  // meant `user_metadata.role`, which the account writes itself. The roster row
+  // is the authority now, so an admin putting somebody at 'admin' there is a
+  // grant, not an escalation. What still must not work is the account granting
+  // itself, so that is what this asserts.
+  it('a plain member cannot bulk-email, and its own metadata does not change that', async () => {
     const sb = getSupabaseAdmin()
-    await sb
-      .from('members')
-      .upsert(
-        { email: official.email, name: `${E2E_TAG} elevated`, role: 'admin', status: 'active' },
-        { onConflict: 'email' }
-      )
+
+    // Exactly the write `PUT /auth/v1/user` performs — an ordinary
+    // authenticated call the account can make for itself, no admin key needed.
+    // Done through the admin client here only to keep the test to one client.
+    await sb.auth.admin.updateUserById(official.id, {
+      user_metadata: { full_name: `${E2E_TAG} official`, role: 'admin' },
+      app_metadata: { role: 'admin', capabilities: ['scheduler'] },
+    })
+
     const res = await invokeFunction(handler, {
       method: 'POST',
       bearerToken: official.accessToken,
       body: validBody(),
     })
     expect(res.statusCode).toBe(403)
+
+    // And the roster, which is the thing that would have had to change, did not.
+    const { data } = await sb
+      .from('members')
+      .select('role')
+      .eq('user_id', official.id)
+      .single()
+    expect(data!.role).toBe('member')
   })
 })

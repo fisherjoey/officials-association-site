@@ -27,7 +27,12 @@ import {
  */
 export interface PortalUser {
   name: string
-  role: StructuralRole
+  /**
+   * `null` for a signed-in account with no roster row. Signed in is not a rung
+   * — ask `hasRole` / `can` rather than comparing this, and both are false here
+   * exactly as they are for a signed-out visitor.
+   */
+  role: StructuralRole | null
   capabilities: readonly Capability[]
   level?: number
   avatar?: string

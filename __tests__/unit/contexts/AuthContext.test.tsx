@@ -13,6 +13,11 @@
  * configured client still subscribes, still reacts to SIGNED_IN, and still
  * unsubscribes on unmount. The stub used below is the real one from
  * lib/api/client, not a lookalike.
+ *
+ * They also pin where a session's rung comes from. It is the roster row that
+ * `membersAPI.getByUserId` returns, and only that: the token's `user_metadata`
+ * is written by the account itself, and `app_metadata` is a copy of the roster
+ * that nothing keeps in step any more.
  */
 import React from 'react'
 import { render, screen, act, waitFor } from '@testing-library/react'
@@ -43,14 +48,17 @@ jest.mock('@/lib/clientLogger', () => ({
 
 jest.mock('@/lib/api', () => ({
   membersAPI: {
-    getByUserId: jest.fn().mockResolvedValue({ id: 'member-1' }),
-    create: jest.fn().mockResolvedValue({ id: 'member-1' }),
+    getByUserId: jest.fn(),
+    create: jest.fn(),
   },
 }))
 
 jest.mock('@/lib/fileDownload', () => ({
   clearSignedUrlCache: jest.fn(),
 }))
+const { membersAPI } = jest.requireMock('@/lib/api') as {
+  membersAPI: { getByUserId: jest.Mock; create: jest.Mock }
+}
 
 /** The genuine "Supabase is not configured" stub, straight from lib/api/client. */
 function realUnconfiguredStub() {
@@ -90,7 +98,7 @@ function SessionProbe() {
   const { isLoading, isAuthenticated, user } = useAuth()
   return (
     <div data-testid="session">
-      {isLoading ? 'loading' : isAuthenticated ? `authed:${user?.role}` : 'anonymous'}
+      {isLoading ? 'loading' : isAuthenticated ? `authed:${user?.role ?? 'none'}` : 'anonymous'}
     </div>
   )
 }
@@ -109,6 +117,10 @@ const warn = clientLogger.warn as jest.Mock
 
 beforeEach(() => {
   jest.clearAllMocks()
+  // Default roster answer: on the roster, bottom rung. Individual tests
+  // override it — the rung a session gets is whatever this returns.
+  membersAPI.getByUserId.mockResolvedValue({ id: 'member-1', role: 'member', capabilities: [] })
+  membersAPI.create.mockResolvedValue({ id: 'member-1', role: 'member', capabilities: [] })
 })
 
 afterEach(() => {
@@ -184,6 +196,11 @@ describe('AuthProvider with Supabase configured', () => {
   })
 
   it('still promotes a SIGNED_IN event to an authenticated user', async () => {
+    membersAPI.getByUserId.mockResolvedValue({
+      id: 'member-1',
+      role: 'executive',
+      capabilities: [],
+    })
     renderProvider()
 
     await waitFor(() => {
@@ -191,17 +208,71 @@ describe('AuthProvider with Supabase configured', () => {
     })
 
     await act(async () => {
-      handler('SIGNED_IN', {
+      await handler('SIGNED_IN', {
         user: {
           id: 'user-1',
           email: 'exec@example.com',
           user_metadata: { full_name: 'Exec User' },
-          app_metadata: { role: 'executive' },
+          app_metadata: {},
         },
       })
     })
 
     expect(screen.getByTestId('session')).toHaveTextContent('authed:executive')
+  })
+
+  it('takes the rung from the roster row and not from the token', async () => {
+    // The browser half of the escalation the API carried: the account writes
+    // `user_metadata` itself, so a session that believed it would render an
+    // admin dashboard for anyone who asked for one.
+    membersAPI.getByUserId.mockResolvedValue({
+      id: 'member-1',
+      role: 'member',
+      capabilities: [],
+    })
+    renderProvider()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session')).toHaveTextContent('anonymous')
+    })
+
+    await act(async () => {
+      await handler('SIGNED_IN', {
+        user: {
+          id: 'user-1',
+          email: 'liar@example.com',
+          user_metadata: { full_name: 'Liar', role: 'admin', roles: ['admin'] },
+          app_metadata: { role: 'admin', capabilities: ['evaluator'] },
+        },
+      })
+    })
+
+    expect(screen.getByTestId('session')).toHaveTextContent('authed:member')
+  })
+
+  it('signs in a user with no roster row as having no rung at all', async () => {
+    // The state MemberGuard renders the registration form for. It must not
+    // resolve to the bottom rung — signed in is not a rung.
+    membersAPI.getByUserId.mockResolvedValue(null)
+    membersAPI.create.mockResolvedValue(null)
+    renderProvider()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session')).toHaveTextContent('anonymous')
+    })
+
+    await act(async () => {
+      await handler('SIGNED_IN', {
+        user: {
+          id: 'user-1',
+          email: 'newcomer@example.com',
+          user_metadata: { full_name: 'Newcomer' },
+          app_metadata: {},
+        },
+      })
+    })
+
+    expect(screen.getByTestId('session')).toHaveTextContent('authed:none')
   })
 
   it('still unsubscribes on unmount', async () => {
