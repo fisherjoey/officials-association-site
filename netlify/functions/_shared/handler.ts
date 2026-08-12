@@ -214,11 +214,18 @@ export class PrincipalLookupError extends Error {
  * somebody has to keep in step with `members.role` by hand, forever, with an
  * escalation on the day they forget. So the answer comes from the roster
  * instead. `members.role` and `members.capabilities` are the columns the RLS
- * policies already key on, and nothing an account can reach writes them:
+ * policies already key on, and no browser session can write them:
  * `authenticated` has no UPDATE grant on `members`, and the guard trigger in
  * migration 0015 refuses the write even if someone re-grants one. The function
  * layer and the database now answer from the same two columns, so they agree by
  * construction rather than by discipline.
+ *
+ * What that argument does not cover, and what has to be checked by hand, is
+ * `netlify/functions/members`: it is the write path for these columns, it holds
+ * the service-role key, and neither barrier above applies to it. The rule it
+ * enforces instead is written down there — see `SELF_SERVICE_COLUMNS` and
+ * `conveysNothingBeyondTheDefault()`. Any future endpoint that writes `role`,
+ * `capabilities` or `user_id` on somebody's behalf inherits that obligation.
  *
  * `contexts/AuthContext.tsx` resolves the browser's view of the same question
  * and reads the same columns through the same `principalFromMemberRow()`.

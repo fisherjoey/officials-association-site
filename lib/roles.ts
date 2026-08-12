@@ -318,10 +318,19 @@ export interface MemberRoleRow {
  *
  * `members.role` and `members.capabilities` are the columns the RLS policies
  * read — through `structural_role()` and `has_capability()` in migration 0015 —
- * and neither is writable by the account they describe: `authenticated` holds
- * no UPDATE grant on `members`, and the guard trigger refuses the write even if
- * someone re-grants one. Resolving the function layer from the same two columns
- * is what makes the two layers agree without anybody keeping them in step.
+ * and no browser session can write either one: `authenticated` holds no UPDATE
+ * grant on `members`, and the guard trigger refuses the write even if someone
+ * re-grants one. Resolving the function layer from the same two columns is what
+ * makes the two layers agree without anybody keeping them in step.
+ *
+ * The one write path that reaches these columns is `netlify/functions/members`,
+ * which holds the service-role key and is therefore outside both barriers. It
+ * has to enforce the rule itself, and the whole of it lives in one place:
+ * `SELF_SERVICE_COLUMNS` there names what a non-admin may write on their own
+ * row, and `conveysNothingBeyondTheDefault()` caps what claiming an unlinked
+ * row can hand over. `members.user_id` belongs to that list too — it is the
+ * column that binds a rung to a person, so writing it is a privilege write even
+ * though it holds neither privilege itself.
  *
  * A missing row is `ANONYMOUS`, not a member. Being signed in is not a rung:
  * that state is a real one — `MemberGuard` renders the registration form for

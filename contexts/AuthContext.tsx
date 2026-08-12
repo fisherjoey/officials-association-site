@@ -100,9 +100,16 @@ async function resolvePrincipal(supabaseUser: SupabaseUser | null): Promise<Prin
  * The roster row is now the only thing that confers anything, so this is also
  * the moment a new account acquires a rung. It acquires the bottom one:
  * `membersAPI.create` goes through the `members` function, which refuses a
- * non-admin caller anything but the default rung and refuses capabilities
- * outright, and the guard trigger in migration 0015 says the same at the
- * database. There is no first-login shortcut into a grant, on purpose.
+ * non-admin caller anything but the default rung, refuses capability grants in
+ * any shape, and refuses any column that is not the caller's own profile. There
+ * is no first-login shortcut into a grant, on purpose.
+ *
+ * A 409 here is the normal answer for someone an admin has already put on the
+ * roster; `MemberGuard` sends them through `MemberRegistration`, which claims
+ * the waiting row instead of creating a second one. That claim is capped at the
+ * default rung — see the PUT branch of `netlify/functions/members.ts` — so a
+ * row that carries a real rung is linked by an admin rather than by whoever
+ * signs up at its address first.
  */
 async function syncUserToMembers(supabaseUser: SupabaseUser): Promise<Principal> {
   try {

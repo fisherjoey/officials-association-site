@@ -86,8 +86,19 @@ export function MemberProvider({ children }: { children: ReactNode }) {
           // If found by email, update the member record with the new user_id
           if (memberData && !memberData.user_id) {
             console.log('Linking member to Supabase Auth user by email...')
-            await membersAPI.update({ id: memberData.id, user_id: user.id })
-            memberData.user_id = user.id
+            try {
+              await membersAPI.update({ id: memberData.id, user_id: user.id })
+              memberData.user_id = user.id
+            } catch (linkErr: any) {
+              // The API refuses this link when the row carries a rung or a
+              // grant — those are an admin's to hand over, not something an
+              // address claims for itself. Show the row we found rather than
+              // the error: the profile screens work from it either way, and
+              // nothing here confers anything, since `AuthContext` reads the
+              // rung from the row that points at this account and there still
+              // is not one.
+              console.warn('Could not link member row to this account:', linkErr?.message)
+            }
           }
         } catch (err: any) {
           // 404 or API_ERROR is expected for new users

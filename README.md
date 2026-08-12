@@ -382,6 +382,15 @@ The auth user's `app_metadata` and `user_metadata` are not consulted for authori
 `user_metadata` least of all: it holds whatever the account last sent to `PUT /auth/v1/user`,
 an ordinary authenticated call that any signed-in user can make about themselves.
 
+One write path does reach those columns, and neither of those barriers covers it.
+`netlify/functions/members.ts` is how every roster write in this app happens, it carries the
+service-role key, and both RLS and the trigger stand aside for that key. So it enforces the
+rule itself. A non-admin caller writes their own profile fields and nothing else. The list of
+those fields is `SELF_SERVICE_COLUMNS` in that file, written as an allow-list rather than as a
+list of things to strip, so a column added to `members` next year is refused until somebody
+adds it deliberately. `user_id` sits on the privileged side of that line with `role` and
+`capabilities`, because it is the column that says which person a rung belongs to.
+
 A signed-in account with no roster row has no rung and no grants. That state is a normal part
 of the flow rather than a fault. It is what someone accepting an invitation or signing up on
 their own looks like before they register, and `MemberGuard` renders the registration form for
@@ -396,6 +405,35 @@ caller", rung or not. A signed-in account with no roster row reads all of it. Wh
 whatever asks for a rung or a grant: the roster, the logs, contact submissions, email history,
 service requests, and anyone else's evaluations. That line, and not the roster row, is what the
 self-service signup decision turns on. See [Auth configuration](#auth-configuration).
+
+### Linking an account to a roster row
+
+A roster row can exist before the person has an account. An admin adds someone with
+`skipInvite`, or a season's roster arrives as a bulk import. The row sits there with `user_id`
+empty until something points it at an auth user.
+
+Three things do that, and all three are the association acting. The invite flow links the row
+when the invitation is redeemed. `sync-members-auth` links rows by address in a sweep an admin
+runs. An admin editing a member sets it directly.
+
+The fourth is the registration screen, and it is the one with a rule attached. When someone
+signs in and finds an unclaimed row at their address, `MemberRegistration` claims that row
+instead of creating a second one, but only if the row sits at the default rung and carries no
+grants. Anything above that has to be linked by one of the other three.
+
+The cap is there because an address is only evidence when Supabase is checking it. Email
+confirmations are off in a fresh project, and while they are off, signing up as
+`treasurer@your-association.org` takes nothing but typing it. An unlinked executive row waiting
+at that address would then be one PUT away from belonging to whoever got there first. A claim
+capped at the floor can only hand over what registering a fresh row would have handed over
+anyway.
+
+The cap protects the rung. It does not protect what else is in the row, which for a member is a
+phone number, a home address and an emergency contact. Turn on **Confirm email** under
+Authentication, Providers, Email before you let a matching address identify anybody.
+
+`__tests__/integration/principal-escalation.test.ts` runs the claim against a live stack from a
+real signup, and fails if a privileged row ever answers one again.
 
 The cost is one indexed two-column lookup per authenticated request. `createHandler` resolves
 it once, before the auth gate, and hands the answer to the handler. Nothing is cached between
@@ -438,6 +476,13 @@ Add `<your origin>/auth/callback` to **Redirect URLs**. `getAuthCallbackUrl()` i
 `lib/siteConfig.ts` builds that path and takes no arguments on purpose. Threading user input
 into it turns the login flow into an open redirect through Supabase's allow-listed domain.
 
+Turn on **Confirm email**, under Authentication, Providers, Email. It is off in a fresh local
+project, and while it is off an address proves nothing, because anyone can sign up as anyone.
+The portal treats a matching address as grounds for handing someone the unclaimed roster row
+waiting at it, which is how an invited member registers themselves, and that row holds their
+phone number, home address and emergency contact. See [Linking an account to a roster
+row](#linking-an-account-to-a-roster-row).
+
 Turn self-service signup off unless you have a reason to want it on. A stranger who signs up no
 longer becomes an administrator, but they do get a working account, and a working account reads
 most of the portal: announcements, resources, the calendar, newsletters, scheduler updates,
@@ -449,9 +494,10 @@ portal, and `syncUserToMembers` in `contexts/AuthContext.tsx` POSTs a `members` 
 `SIGNED_IN` event, so a self-signup is on the roster at the bottom rung from their first sign-in,
 with no admin involved. That is deliberate, and it is how an invited person registers
 themselves, but it means "no admin has touched this account" and "this account has no rung" stop
-describing the same thing after one sign-in. Nobody climbs higher that way: the `members`
-function refuses a non-admin caller any role but the default and refuses capabilities outright,
-and the guard trigger in migration 0015 says the same at the database.
+describing the same thing after one sign-in. Nobody climbs higher that way. The `members`
+function hands a non-admin caller the default rung, refuses capability grants in every shape
+they can arrive in, and refuses any column that is not that caller's own profile. The guard
+trigger in migration 0015 says the same at the database.
 
 Leave signup on only if you are content for anyone who finds the site to read your members-only
 content.
