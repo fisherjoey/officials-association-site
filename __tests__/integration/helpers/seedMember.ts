@@ -19,6 +19,7 @@ export async function seedMember(
     name: string
     rank: number
     role: string
+    capabilities: string[]
     status: string
     certification_level: string
   }> = {}
@@ -31,7 +32,11 @@ export async function seedMember(
     user_id: user.id,
     email: user.email,
     name: overrides.name ?? `E2E ${user.role}`,
-    role: overrides.role ?? user.role,
+    // `user.role` is the name the test asked for and may be a retired flat
+    // name like 'evaluator'. The split shape resolved at user-creation time is
+    // what the CHECK constraint and the RLS helpers expect.
+    role: overrides.role ?? user.structuralRole,
+    capabilities: overrides.capabilities ?? user.capabilities,
     status: overrides.status ?? 'active',
   }
   if (overrides.rank !== undefined) insert.rank = overrides.rank

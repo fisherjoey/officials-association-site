@@ -10,6 +10,7 @@ import { memberRegistrationSchema, type MemberRegistrationFormData } from '@/lib
 import { PROVINCES } from '@/lib/constants'
 import { friendlyErrorFromThrown } from '@/lib/userFacingError'
 import { ORG_SHORT_NAME } from '@/lib/siteConfig'
+import { DEFAULT_STRUCTURAL_ROLE } from '@/lib/roles'
 
 interface MemberRegistrationProps {
   onComplete: () => void
@@ -72,7 +73,7 @@ export default function MemberRegistration({ onComplete }: MemberRegistrationPro
           email: existing.email || user?.email,
           ...profile,
           status: existing.status || 'active',
-          role: existing.role || 'official',
+          role: existing.role || DEFAULT_STRUCTURAL_ROLE,
         })
       } else {
         await membersAPI.create({
@@ -80,7 +81,7 @@ export default function MemberRegistration({ onComplete }: MemberRegistrationPro
           email: user?.email,
           ...profile,
           status: 'active',
-          role: 'official',
+          role: DEFAULT_STRUCTURAL_ROLE,
         })
       }
 

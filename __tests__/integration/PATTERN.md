@@ -101,7 +101,12 @@ it('admin can do X', async () => {
 })
 ```
 
-Roles: `'admin' | 'executive' | 'evaluator' | 'mentor' | 'official'`.
+Roles: the structural ladder is `'member' | 'executive' | 'admin'`. `createTestUser` also
+accepts the retired flat names (`'official'`, `'evaluator'`, `'mentor'`) and resolves them
+through `toPrincipal`, so `createTestUser('evaluator')` mints a plain member holding the
+evaluator capability. Pass extra grants as the second argument:
+`createTestUser('member', ['evaluator'])`. The resolved shape is on the returned user as
+`structuralRole` and `capabilities`, and that is what `seedMember` writes to the roster.
 
 For files that exercise lots of cases, mint once in `beforeAll`:
 

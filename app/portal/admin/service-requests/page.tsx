@@ -12,6 +12,7 @@ import {
 import { getSupabaseBrowserClient } from '@/lib/api/client'
 import { readFriendlyError, friendlyErrorFromThrown } from '@/lib/userFacingError'
 import { useAdminGuard } from '@/hooks/useAdminGuard'
+import { PORTAL_FEATURES, SERVICE_REQUESTS_NAME } from '@/lib/siteConfig'
 import {
   IconArrowUp,
   IconArrowDown,
@@ -35,7 +36,7 @@ import {
   IconSquareX,
 } from '@tabler/icons-react'
 
-interface OSASubmission {
+interface ServiceRequest {
   id: string
   created_at: string
   updated_at: string
@@ -99,7 +100,7 @@ const statusConfig: Record<string, { label: string; icon: React.ElementType; col
 }
 
 // Helper to get event-specific details
-function getEventDetails(submission: OSASubmission) {
+function getEventDetails(submission: ServiceRequest) {
   switch (submission.event_type) {
     case 'League':
       return {
@@ -133,12 +134,12 @@ function getEventDetails(submission: OSASubmission) {
 }
 
 // Detail Modal Component
-function OSADetailModal({
+function ServiceRequestDetailModal({
   submission,
   onClose,
   onUpdate
 }: {
-  submission: OSASubmission
+  submission: ServiceRequest
   onClose: () => void
   onUpdate: (id: string, updates: { status?: string; notes?: string }) => Promise<void>
 }) {
@@ -408,12 +409,12 @@ function OSADetailModal({
   )
 }
 
-export default function OSASubmissionsPage() {
+export default function ServiceRequestsPage() {
   useAdminGuard()
-  const [submissions, setSubmissions] = useState<OSASubmission[]>([])
+  const [submissions, setSubmissions] = useState<ServiceRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedSubmission, setSelectedSubmission] = useState<OSASubmission | null>(null)
+  const [selectedSubmission, setSelectedSubmission] = useState<ServiceRequest | null>(null)
   const [pagination, setPagination] = useState<PaginationInfo>({
     page: 1,
     pageSize: 50,
@@ -457,7 +458,7 @@ export default function OSASubmissionsPage() {
       if (filters.startDate) params.append('startDate', filters.startDate)
       if (filters.endDate) params.append('endDate', filters.endDate)
 
-      const response = await fetch(`/.netlify/functions/osa-submissions?${params}`, {
+      const response = await fetch(`/.netlify/functions/service-requests?${params}`, {
         headers: {
           Authorization: `Bearer ${session.access_token}`,
         },
@@ -482,7 +483,7 @@ export default function OSASubmissionsPage() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) throw new Error('Not authenticated')
 
-    const response = await fetch('/.netlify/functions/osa-submissions', {
+    const response = await fetch('/.netlify/functions/service-requests', {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -543,7 +544,7 @@ export default function OSASubmissionsPage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `osa-submissions-${new Date().toISOString().split('T')[0]}.csv`
+    a.download = `service-requests-${new Date().toISOString().split('T')[0]}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -564,7 +565,7 @@ export default function OSASubmissionsPage() {
 
   const hasActiveFilters = Object.values(filters).some(v => v !== '')
 
-  const columns: ColumnDef<OSASubmission>[] = useMemo(
+  const columns: ColumnDef<ServiceRequest>[] = useMemo(
     () => [
       {
         accessorKey: 'created_at',
@@ -693,7 +694,7 @@ export default function OSASubmissionsPage() {
     <div className="p-6 portal-animate">
       {/* Detail Modal */}
       {selectedSubmission && (
-        <OSADetailModal
+        <ServiceRequestDetailModal
           submission={selectedSubmission}
           onClose={() => setSelectedSubmission(null)}
           onUpdate={updateSubmission}
@@ -703,8 +704,8 @@ export default function OSASubmissionsPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold font-heading tracking-tight text-gray-900 dark:text-white">OSA Submissions</h1>
-          <p className="text-gray-600 dark:text-gray-400 text-sm">Officiating Services Agreement requests</p>
+          <h1 className="text-2xl font-bold font-heading tracking-tight text-gray-900 dark:text-white">{SERVICE_REQUESTS_NAME}</h1>
+          <p className="text-gray-600 dark:text-gray-400 text-sm">{PORTAL_FEATURES.serviceRequestsDescription}</p>
         </div>
         <div className="flex gap-2">
           <button

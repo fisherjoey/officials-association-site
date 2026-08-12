@@ -8,6 +8,7 @@ import { useMember } from '@/contexts/MemberContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/hooks/useToast'
 import { parseAPIError, sanitize } from '@/lib/errorHandling'
+import { canViewAllEvaluations } from '@/lib/roles'
 import FileUpload from '@/components/FileUpload'
 import Modal from '@/components/ui/Modal'
 import {
@@ -42,7 +43,7 @@ interface Activity {
 }
 
 export default function EvaluationsPage() {
-  const { user } = useRole()
+  const { principal, hasRole, can } = useRole()
   const { member } = useMember()
   const { getAccessToken } = useAuth()
   const { success, error } = useToast()
@@ -68,11 +69,17 @@ export default function EvaluationsPage() {
   const [selectedActivityId, setSelectedActivityId] = useState<string>('')
   const [loadingActivities, setLoadingActivities] = useState(false)
 
-  // Check role permissions
-  const canCreate = user.role === 'admin' || user.role === 'executive' || user.role === 'evaluator'
-  const canViewAll = user.role === 'admin' || user.role === 'executive' || user.role === 'evaluator'
-  const canDelete = user.role === 'admin' || user.role === 'executive' // Only admin/executive can delete
-  const isEvaluator = user.role === 'evaluator' // Show two-section view for evaluators
+  // Permissions. `canViewAll` and `canCreate` come from lib/roles so this page,
+  // netlify/functions/evaluations.ts and the RLS policy in migration 0015 are
+  // all reading the same rule rather than three copies of it.
+  const canViewAll = canViewAllEvaluations(principal)
+  const canCreate = canViewAll
+  const canDelete = hasRole('executive') // Only admin/executive can delete
+  // Two-section view ("mine" / "all") is for people who write evaluations, not
+  // for people senior enough to read them. An executive who also holds the
+  // grant now gets it, which the old `role === 'evaluator'` check could not
+  // express — they had to give up being an executive to be an evaluator.
+  const isEvaluator = can('evaluator')
 
   // Load evaluations
   const loadEvaluations = useCallback(async () => {

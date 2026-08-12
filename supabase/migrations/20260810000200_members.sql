@@ -130,8 +130,12 @@ COMMENT ON COLUMN public.members.user_id IS
   'auth.users.id for this member. NULL until they first sign in, and nulled again if the auth user is deleted.';
 COMMENT ON COLUMN public.members.netlify_user_id IS
   'DEPRECATED. Legacy Netlify Identity id, retained so historical rows stay resolvable.';
+-- 0015 narrows this column to member | executive | admin behind a CHECK
+-- constraint, folds 'official' into 'member', and adds the `capabilities`
+-- column that carries evaluator/mentor and the rest. This comment describes the
+-- column as this file leaves it; 0015 replaces it.
 COMMENT ON COLUMN public.members.role IS
-  'Structural role: official | executive | admin | evaluator | mentor. Compared case-insensitively by the role helpers in 0003.';
+  'Role, free text at this point in the chain. 0015 splits it: structural role here, capability grants in members.capabilities. Compared case-insensitively by the role helpers in 0003.';
 COMMENT ON TABLE  public.member_activities IS
   'Per-member activity log. Visible to the member it belongs to, plus admins and executives.';
 COMMENT ON COLUMN public.member_activities.activity_type IS

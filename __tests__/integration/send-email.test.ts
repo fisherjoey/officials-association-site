@@ -82,8 +82,8 @@ beforeAll(async () => {
   await Promise.all([
     seedMember(adminMemberA, { role: 'admin' }),
     seedMember(adminMemberB, { role: 'admin' }),
-    seedMember(highRankOfficial, { role: 'official', certification_level: 'Level 3' }),
-    seedMember(lowRankOfficial, { role: 'official', certification_level: 'Level 1' }),
+    seedMember(highRankOfficial, { role: 'member', certification_level: 'Level 3' }),
+    seedMember(lowRankOfficial, { role: 'member', certification_level: 'Level 1' }),
   ])
 }, 60_000)
 

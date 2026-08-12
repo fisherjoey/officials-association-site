@@ -5,14 +5,21 @@ import { getSupabaseBrowserClient } from '@/lib/api/client'
 import { membersAPI } from '@/lib/api'
 import { clientLogger } from '@/lib/clientLogger'
 import type { User as SupabaseUser, Session } from '@supabase/supabase-js'
-
-type UserRole = 'official' | 'executive' | 'admin' | 'evaluator' | 'mentor'
+import {
+  toPrincipal,
+  type Capability,
+  type Principal,
+  type StructuralRole,
+} from '@/lib/roles'
 
 interface User {
   id: string
   email: string
   name: string
-  role: UserRole
+  /** Rung on the org ladder. See `lib/roles.ts`. */
+  role: StructuralRole
+  /** Capability grants, orthogonal to `role`. */
+  capabilities: readonly Capability[]
   user_metadata?: any
   app_metadata?: any
 }
@@ -34,38 +41,44 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 // Create Supabase browser client
 const supabase = getSupabaseBrowserClient()
 
-// Map Supabase user metadata to our app roles
-function getUserRole(supabaseUser: SupabaseUser | null): UserRole {
-  if (!supabaseUser) return 'official'
+/**
+ * Resolve a Supabase auth user to a structural role plus capability grants.
+ *
+ * This mirrors `getPrincipal()` in `netlify/functions/_shared/handler.ts` and
+ * has to keep mirroring it — the browser deciding which tiles to render and the
+ * function deciding whether to answer must agree, or the portal shows a control
+ * that 403s. Both now defer to `toPrincipal()` so there is one resolver rather
+ * than two implementations of the same precedence rules.
+ *
+ * The `user_metadata` fallback below is the known hole documented in the
+ * README (PLAT-33): `user_metadata` is writable by the user with a plain
+ * authenticated call, so an account with no server-set `app_metadata.role` can
+ * name its own role. Preserved deliberately — removing it here without removing
+ * it in the function layer would only desynchronise the two, and the fix is
+ * tracked separately.
+ *
+ * The explicit `capabilities` list is read from `app_metadata` and nowhere else.
+ * That is narrower than it looks, and is not a boundary: `role` and `roles`
+ * below still fall back to `user_metadata`, and `toPrincipal()` derives a
+ * capability from either of them, so `user_metadata.role = 'evaluator'` yields
+ * a member holding the evaluator grant. PLAT-33 therefore reaches the
+ * capability grants as well as the rung. Closing it means dropping the
+ * `user_metadata` fallback from the role fields, not just withholding the
+ * `capabilities` key from it.
+ */
+function getPrincipal(supabaseUser: SupabaseUser | null): Principal {
+  if (!supabaseUser) return toPrincipal(null)
 
-  // Check both app_metadata.role and user_metadata.role
-  const appRole = supabaseUser.app_metadata?.role
-  const userRole = supabaseUser.user_metadata?.role
-  const appRoles = supabaseUser.app_metadata?.roles || []
-  const userRoles = supabaseUser.user_metadata?.roles || []
-  const roles = [...appRoles, ...userRoles]
-
-  // Check direct role field first (app_metadata takes precedence)
-  const directRole = appRole || userRole
-  if (directRole) {
-    const roleLower = directRole.toLowerCase()
-    if (roleLower === 'admin') return 'admin'
-    if (roleLower === 'executive') return 'executive'
-    if (roleLower === 'evaluator') return 'evaluator'
-    if (roleLower === 'mentor') return 'mentor'
-    if (roleLower === 'official') return 'official'
-  }
-
-  // Then check roles array (case-insensitive)
-  const rolesLower = roles.map((r: string) => r.toLowerCase())
-  if (rolesLower.includes('admin')) return 'admin'
-  if (rolesLower.includes('executive')) return 'executive'
-  if (rolesLower.includes('evaluator')) return 'evaluator'
-  if (rolesLower.includes('mentor')) return 'mentor'
-  if (rolesLower.includes('official')) return 'official'
-
-  // New users without roles get 'official' by default
-  return 'official'
+  return toPrincipal({
+    // `||` not `??`, matching the resolver this replaces: an empty-string role
+    // in app_metadata falls through to user_metadata rather than winning.
+    role: supabaseUser.app_metadata?.role || supabaseUser.user_metadata?.role,
+    roles: [
+      ...(supabaseUser.app_metadata?.roles ?? []),
+      ...(supabaseUser.user_metadata?.roles ?? []),
+    ],
+    capabilities: supabaseUser.app_metadata?.capabilities,
+  })
 }
 
 // Sync Supabase Auth user with members table
@@ -75,12 +88,21 @@ async function syncUserToMembers(supabaseUser: SupabaseUser): Promise<void> {
     const existingMember = await membersAPI.getByUserId(supabaseUser.id)
 
     if (!existingMember) {
-      // Create new member record
+      const principal = getPrincipal(supabaseUser)
+      // Create new member record.
+      //
+      // Only the structural role is mirrored onto the roster row. Capabilities
+      // are deliberately not: `members.capabilities` is what the RLS policies
+      // read, the guard trigger in 0015 refuses to let an unprivileged session
+      // set it, and seeding it from auth metadata on first login would be that
+      // session granting itself the thing the trigger exists to withhold.
+      // Capabilities are granted by an admin through the roster, and there is
+      // no first-login shortcut into them on purpose.
       await membersAPI.create({
         user_id: supabaseUser.id,
         email: supabaseUser.email!,
         name: supabaseUser.user_metadata?.full_name || supabaseUser.user_metadata?.name || supabaseUser.email!,
-        role: getUserRole(supabaseUser),
+        role: principal.role ?? undefined,
         status: 'active'
       })
       console.log('Created new member record for:', supabaseUser.email)
@@ -102,13 +124,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const disableAuthInDev = process.env.NEXT_PUBLIC_DISABLE_AUTH_DEV === 'true'
   const shouldBypassAuth = isDevMode && disableAuthInDev
 
-  // Dev users for cycling through different roles
-  const devUsers = [
+  // Dev users for cycling through roles and capability grants. The evaluator
+  // entry is now a plain member who holds the evaluator capability, which is
+  // the shape the model actually produces — the old entry made "evaluator" a
+  // rung, and testing against it hid the fact that no policy could see it.
+  const devUsers: User[] = [
     {
       id: 'dev-user-admin',
       email: 'admin@example.com',
       name: 'Dev Admin User',
-      role: 'admin' as UserRole,
+      role: 'admin',
+      capabilities: [],
       user_metadata: { full_name: 'Dev Admin User' },
       app_metadata: { roles: ['admin'] }
     },
@@ -116,7 +142,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       id: 'dev-user-executive',
       email: 'executive@example.com',
       name: 'Dev Executive User',
-      role: 'executive' as UserRole,
+      role: 'executive',
+      capabilities: [],
       user_metadata: { full_name: 'Dev Executive User' },
       app_metadata: { roles: ['executive'] }
     },
@@ -124,29 +151,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       id: 'dev-user-evaluator',
       email: 'evaluator@example.com',
       name: 'Dev Evaluator User',
-      role: 'evaluator' as UserRole,
+      role: 'member',
+      capabilities: ['evaluator'],
       user_metadata: { full_name: 'Dev Evaluator User' },
-      app_metadata: { roles: ['evaluator'] }
+      app_metadata: { roles: ['member'], capabilities: ['evaluator'] }
     },
     {
-      id: 'dev-user-official',
-      email: 'official@example.com',
-      name: 'Dev Official User',
-      role: 'official' as UserRole,
-      user_metadata: { full_name: 'Dev Official User' },
-      app_metadata: { roles: ['official'] }
+      id: 'dev-user-member',
+      email: 'member@example.com',
+      name: 'Dev Member User',
+      role: 'member',
+      capabilities: [],
+      user_metadata: { full_name: 'Dev Member User' },
+      app_metadata: { roles: ['member'] }
     }
   ]
 
   // Convert Supabase user to our User type
-  const mapSupabaseUser = (sbUser: SupabaseUser): User => ({
-    id: sbUser.id,
-    email: sbUser.email!,
-    name: sbUser.user_metadata?.full_name || sbUser.user_metadata?.name || sbUser.email!,
-    role: getUserRole(sbUser),
-    user_metadata: sbUser.user_metadata,
-    app_metadata: sbUser.app_metadata
-  })
+  const mapSupabaseUser = (sbUser: SupabaseUser): User => {
+    const principal = getPrincipal(sbUser)
+    return {
+      id: sbUser.id,
+      email: sbUser.email!,
+      name: sbUser.user_metadata?.full_name || sbUser.user_metadata?.name || sbUser.email!,
+      role: principal.role ?? 'member',
+      capabilities: principal.capabilities,
+      user_metadata: sbUser.user_metadata,
+      app_metadata: sbUser.app_metadata
+    }
+  }
 
   useEffect(() => {
     // If authentication is bypassed in development, create a mock user

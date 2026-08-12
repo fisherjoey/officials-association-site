@@ -1,7 +1,17 @@
+/**
+ * Admin list and status updates for the requests that arrive from the public
+ * `/get-officials` form.
+ *
+ * The table is still `osa_submissions`, after the Officiating Services
+ * Agreement this started as. The route, the function and the labels are
+ * generic now; the table name is not, because renaming it means a migration
+ * against every adopter's live data for a string nobody outside this file
+ * reads. `netlify/functions/osa-webhook.ts` writes the same table.
+ */
 import { createHandler, supabase, errorResponse } from './_shared/handler'
 
 export const handler = createHandler({
-  name: 'osa-submissions',
+  name: 'service-requests',
   methods: ['GET', 'PATCH'],
   auth: 'admin',
   handler: async ({ event }) => {

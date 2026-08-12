@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { membersAPI } from '@/lib/api'
 import { useToast } from '@/hooks/useToast'
 import { IconUser, IconMail, IconShield, IconPhone, IconHome, IconUserHeart, IconEdit, IconDeviceFloppy, IconX, IconLoader2 } from '@tabler/icons-react'
+import { describeRole, normalizeStructuralRole } from '@/lib/roles'
 
 const POSTAL_CODE_REGEX = /^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$/
 const NAME_REGEX = /^[A-Za-z][A-Za-z\s\-']*[A-Za-z]$/
@@ -163,10 +164,8 @@ export default function ProfilePage() {
     setFieldErrors({})
   }
 
-  const formatRole = (role: string) => role.charAt(0).toUpperCase() + role.slice(1)
-
   const getRoleBadgeColor = (role: string) => {
-    switch (role) {
+    switch (normalizeStructuralRole(role)) {
       case 'admin': return 'bg-red-100 text-red-800'
       case 'executive': return 'bg-purple-100 text-purple-800'
       default: return 'bg-blue-100 text-blue-800'
@@ -205,7 +204,7 @@ export default function ProfilePage() {
                 <h1 className="text-base sm:text-lg font-bold text-white truncate">{member?.name || user.name}</h1>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${getRoleBadgeColor(user.role)}`}>
-                    {formatRole(user.role)}
+                    {describeRole(user)}
                   </span>
                   <span className="text-white/60 text-xs truncate">{user.email}</span>
                 </div>

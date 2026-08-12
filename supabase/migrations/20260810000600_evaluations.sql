@@ -13,6 +13,13 @@
 -- second, narrower definition of "evaluator" in SQL now would fork the role
 -- model. The role helpers in 0003 are the seam for that.
 --
+-- 0015 takes that seam. Once `evaluator` is a capability grant rather than a
+-- rung on the structural ladder, `has_capability(auth.uid(), 'evaluator')`
+-- expresses it without forking anything, and the select policy below is
+-- replaced by `evaluations_select_capability_or_subject`. The rules this file
+-- states are the ones in force between here and 0015; read 0015 for the final
+-- matrix.
+--
 -- Re-run safety: IF NOT EXISTS on table and indexes, DROP-then-CREATE on policies
 -- and triggers.
 -- =============================================================================

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { IconClipboardList, IconChevronRight, IconChevronDown } from '@tabler/icons-react'
 import { schedulerUpdatesAPI } from '@/lib/api'
 import { HTMLViewer } from '@/components/HTMLViewer'
+import { MODULES } from '@/lib/siteConfig'
 
 interface SchedulerUpdate {
   id: string
@@ -60,6 +61,11 @@ export default function SchedulerUpdatesWidget() {
       </Link>
     </div>
   )
+
+  // The widget's own footer links into the module's route, so it goes when the
+  // module does. After the hooks, not before: MODULES is a build-time constant,
+  // but rules-of-hooks reads an early return as a conditional hook call.
+  if (!MODULES.schedulerUpdates) return null
 
   if (isLoading) {
     return (

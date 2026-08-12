@@ -45,20 +45,26 @@ const db = createClient(url, key, { auth: { autoRefreshToken: false, persistSess
 
 const PASSWORD = 'demo-portal-password'
 
-/** Everyone in the screenshots. All invented. */
+/**
+ * Everyone in the screenshots. All invented.
+ *
+ * `role` is the structural rung (member | executive | admin) and `caps` are
+ * capability grants, which are orthogonal — Priya is an ordinary member who
+ * also evaluates, a combination the old flat role column could not represent.
+ */
 const PEOPLE = [
   { name: 'Alina Vosberg',    email: 'alina.vosberg@example.org',    role: 'admin',     level: 'Level 4', rank: 1,  login: true },
-  { name: 'Marcus Trelane',   email: 'marcus.trelane@example.org',   role: 'executive', level: 'Level 4', rank: 2,  login: true },
-  { name: 'Priya Ashworth',   email: 'priya.ashworth@example.org',   role: 'official',  level: 'Level 3', rank: 3,  login: true },
-  { name: 'Tomas Kirilenko',  email: 'tomas.kirilenko@example.org',  role: 'official',  level: 'Level 3', rank: 4 },
-  { name: 'Nadia Bellweather', email: 'nadia.bellweather@example.org', role: 'official', level: 'Level 2', rank: 5 },
-  { name: 'Owen Castellanos', email: 'owen.castellanos@example.org', role: 'official',  level: 'Level 2', rank: 6 },
-  { name: 'Grace Mbeki',      email: 'grace.mbeki@example.org',      role: 'official',  level: 'Level 2', rank: 7 },
-  { name: 'Hugo Fenwick',     email: 'hugo.fenwick@example.org',     role: 'official',  level: 'Level 1', rank: 8 },
-  { name: 'Simone Draeger',   email: 'simone.draeger@example.org',   role: 'official',  level: 'Level 1', rank: 9 },
-  { name: 'Jonah Petrakis',   email: 'jonah.petrakis@example.org',   role: 'official',  level: 'Level 1', rank: 10 },
-  { name: 'Rhea Sandoval',    email: 'rhea.sandoval@example.org',    role: 'official',  level: 'Level 2', rank: 11 },
-  { name: 'Callum Ashgrove',  email: 'callum.ashgrove@example.org',  role: 'official',  level: 'Level 1', rank: 12, status: 'inactive' },
+  { name: 'Marcus Trelane',   email: 'marcus.trelane@example.org',   role: 'executive', level: 'Level 4', rank: 2,  login: true, caps: ['scheduler'] },
+  { name: 'Priya Ashworth',   email: 'priya.ashworth@example.org',   role: 'member',    level: 'Level 3', rank: 3,  login: true, caps: ['evaluator'] },
+  { name: 'Tomas Kirilenko',  email: 'tomas.kirilenko@example.org',  role: 'member',     level: 'Level 3', rank: 4 },
+  { name: 'Nadia Bellweather', email: 'nadia.bellweather@example.org', role: 'member',    level: 'Level 2', rank: 5 },
+  { name: 'Owen Castellanos', email: 'owen.castellanos@example.org', role: 'member',     level: 'Level 2', rank: 6 },
+  { name: 'Grace Mbeki',      email: 'grace.mbeki@example.org',      role: 'member',     level: 'Level 2', rank: 7 },
+  { name: 'Hugo Fenwick',     email: 'hugo.fenwick@example.org',     role: 'member',     level: 'Level 1', rank: 8 },
+  { name: 'Simone Draeger',   email: 'simone.draeger@example.org',   role: 'member',     level: 'Level 1', rank: 9 },
+  { name: 'Jonah Petrakis',   email: 'jonah.petrakis@example.org',   role: 'member',     level: 'Level 1', rank: 10 },
+  { name: 'Rhea Sandoval',    email: 'rhea.sandoval@example.org',    role: 'member',     level: 'Level 2', rank: 11 },
+  { name: 'Callum Ashgrove',  email: 'callum.ashgrove@example.org',  role: 'member',     level: 'Level 1', rank: 12, status: 'inactive' },
 ]
 
 const phone = (i) => `(555) 01${String(20 + i).padStart(2, '0')}`
@@ -106,7 +112,7 @@ async function seedPeople() {
         password: PASSWORD,
         email_confirm: true,
         user_metadata: { full_name: person.name },
-        app_metadata: { role: person.role },
+        app_metadata: { role: person.role, capabilities: person.caps || [] },
       })
       if (error) throw new Error(`creating auth user ${person.email}: ${error.message}`)
       userId = data.user.id
@@ -120,6 +126,7 @@ async function seedPeople() {
       rank: person.rank,
       status: person.status || 'active',
       role: person.role,
+      capabilities: person.caps || [],
       city: 'Riverbend',
       province: 'Example Region',
       postal_code: 'X0X 0X0',
@@ -342,7 +349,7 @@ async function seedPortalContent() {
       category: 'scheduling',
       priority: 'high',
       author: 'Hugo Fenwick',
-      audience: ['official', 'executive', 'admin'],
+      audience: ['member', 'executive', 'admin'],
       date: iso(-1),
       expires: iso(30),
     },
@@ -353,7 +360,7 @@ async function seedPortalContent() {
       category: 'education',
       priority: 'normal',
       author: 'Marcus Trelane',
-      audience: ['official'],
+      audience: ['member'],
       date: iso(-6),
     },
   ]

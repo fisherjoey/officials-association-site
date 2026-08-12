@@ -17,18 +17,20 @@ import {
   IconClipboardList,
   IconMessageCircle,
 } from '@tabler/icons-react'
+import { isRouteEnabled, PORTAL_FEATURES, SERVICE_REQUESTS_NAME } from '@/lib/siteConfig'
 
 export default function PortalAdmin() {
   const router = useRouter()
-  const { user } = useRole()
+  const { hasRole } = useRole()
+  const isPrivileged = hasRole('executive')
 
   useEffect(() => {
-    if (user.role !== 'admin' && user.role !== 'executive') {
+    if (!isPrivileged) {
       router.push('/portal')
     }
-  }, [user.role, router])
+  }, [isPrivileged, router])
 
-  const adminSections: {
+  const allAdminSections: {
     title: string
     description: string
     icon: React.ComponentType<{ className?: string }>
@@ -72,14 +74,21 @@ export default function PortalAdmin() {
       ]
     },
     {
-      title: 'OSA Submissions',
-      description: 'View and manage Officiating Services Agreement requests',
+      title: SERVICE_REQUESTS_NAME,
+      description: PORTAL_FEATURES.serviceRequestsDescription,
       icon: IconClipboardList,
       links: [
-        { label: 'View OSA Submissions', href: '/portal/admin/osa-submissions', icon: IconClipboardList },
+        { label: `View ${SERVICE_REQUESTS_NAME}`, href: '/portal/admin/service-requests', icon: IconClipboardList },
       ]
     },
   ]
+
+  // Drop links whose module is switched off in lib/siteConfig.ts, then drop any
+  // section left with nothing to link to. Those routes are not in the export at
+  // all, so a link that survived here would be a silent 404.
+  const adminSections = allAdminSections
+    .map((section) => ({ ...section, links: section.links.filter((link) => isRouteEnabled(link.href)) }))
+    .filter((section) => section.links.length > 0)
 
   return (
     <div className="p-6 portal-animate">

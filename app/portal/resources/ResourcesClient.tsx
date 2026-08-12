@@ -81,7 +81,7 @@ interface Resource {
 }
 
 export default function ResourcesClient() {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const { success, error, warning, info } = useToast()
   const [resources, setResources] = useState<Resource[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
@@ -109,7 +109,7 @@ export default function ResourcesClient() {
   const [groupByCategory, setGroupByCategory] = useState(true)
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   // Map API data to frontend format (handles both API format and already-mapped format)
   const mapApiResource = useCallback((r: any): Resource => {

@@ -14,6 +14,7 @@ import {
   getCopyrightYear,
   EMAIL_SUBJECTS,
 } from '../../lib/siteConfig'
+import { DEFAULT_STRUCTURAL_ROLE } from '../../lib/roles'
 
 function generateInviteEmailHtml(inviteUrl: string, name?: string): string {
   return `
@@ -140,7 +141,7 @@ export const handler: Handler = async (event) => {
               name,
               user_id: authUser.id,
               status: 'inactive',  // Inactive until they login and set password
-              role: 'official'
+              role: DEFAULT_STRUCTURAL_ROLE
             }])
 
           if (insertError) {
@@ -176,7 +177,7 @@ export const handler: Handler = async (event) => {
               data: {
                 full_name: member.name,
                 name: member.name,
-                role: member.role || 'official'
+                role: member.role || DEFAULT_STRUCTURAL_ROLE
               },
               redirectTo: `${SITE_URL}/auth/callback`
             }

@@ -86,8 +86,8 @@ function seasonMonths(season: string): { label: string; value: string }[] {
 }
 
 export default function StatisticsClient() {
-  const { user } = useRole()
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const { hasRole } = useRole()
+  const canEdit = hasRole('executive')
 
   const [loading, setLoading] = useState(true)
   const [summary, setSummary] = useState<SummaryResponse | null>(null)

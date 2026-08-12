@@ -2,6 +2,7 @@ import { Handler } from '@netlify/functions'
 import { supabase as supabaseAdmin, getCorsHeaders, errorResponse } from './_shared/handler'
 import { Logger } from '../../lib/logger'
 import { ORG_SHORT_NAME, getAuthCallbackUrl } from '../../lib/siteConfig'
+import { DEFAULT_STRUCTURAL_ROLE } from '../../lib/roles'
 
 /**
  * Accept Invite - Proxy for Supabase magic links
@@ -187,7 +188,7 @@ export const handler: Handler = async (event) => {
         data: {
           full_name: member.name || inviteToken.name,
           name: member.name || inviteToken.name,
-          role: member.role || inviteToken.role || 'official'
+          role: member.role || inviteToken.role || DEFAULT_STRUCTURAL_ROLE
         },
         redirectTo: getAuthCallbackUrl()
       }

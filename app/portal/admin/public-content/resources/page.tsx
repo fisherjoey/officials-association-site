@@ -12,7 +12,7 @@ import { getFieldError } from '@/lib/portalValidation'
 import type { PublicResource } from '@/types/publicContent'
 
 export default function PublicResourcesAdmin() {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const { success, error, warning, info } = useToast()
   const [resources, setResources] = useState<PublicResource[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -45,7 +45,7 @@ export default function PublicResourcesAdmin() {
   })
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   const categories = [
     'Rules & Regulations',

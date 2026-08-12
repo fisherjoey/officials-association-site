@@ -157,7 +157,7 @@ function AnnouncementRow({ announcement, canEdit, getCategoryColor, onEdit, onDe
 }
 
 export default function NewsClient({ initialAnnouncements }: NewsClientProps) {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | CategoryKey>('all')
@@ -178,7 +178,7 @@ export default function NewsClient({ initialAnnouncements }: NewsClientProps) {
   const { success, error, warning, info } = useToast()
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   // Load announcements from API
   useEffect(() => {

@@ -2,7 +2,7 @@
  * Netlify Identity Signup Function (Legacy)
  *
  * Automatically triggered when a new user signs up via Netlify Identity.
- * Assigns the "official" role to all new signups.
+ * Assigns the default structural role to all new signups.
  *
  * Note: This is legacy infrastructure from before the Supabase Auth migration.
  * New signups go through supabase-auth-admin.ts instead.
@@ -10,6 +10,7 @@
 
 import { Handler } from '@netlify/functions'
 import { errorResponse } from './_shared/handler'
+import { DEFAULT_STRUCTURAL_ROLE } from '../../lib/roles'
 
 export const handler: Handler = async (event) => {
   if (event.httpMethod !== 'POST') {
@@ -27,11 +28,11 @@ export const handler: Handler = async (event) => {
       })
     }
 
-    // Assign "official" role to all new signups
+    // Assign the default structural role to all new signups
     const responseBody = {
       app_metadata: {
-        role: 'official',
-        roles: ['official'],
+        role: DEFAULT_STRUCTURAL_ROLE,
+        roles: [DEFAULT_STRUCTURAL_ROLE],
         assigned_at: new Date().toISOString()
       },
       user_metadata: {

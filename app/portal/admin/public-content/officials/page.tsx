@@ -12,7 +12,7 @@ import { getFieldError } from '@/lib/portalValidation'
 import type { Official } from '@/types/publicContent'
 
 export default function PublicOfficialsAdmin() {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const { success, error, warning, info } = useToast()
   const [officials, setOfficials] = useState<Official[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -47,7 +47,7 @@ export default function PublicOfficialsAdmin() {
   })
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   const levels = [1, 2, 3, 4, 5]
 

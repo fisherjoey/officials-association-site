@@ -81,7 +81,7 @@ function SchedulerUpdateRow({ item, canEdit, onEdit, onDelete }: {
 }
 
 export default function SchedulerUpdatesPage() {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const [updates, setUpdates] = useState<SchedulerUpdate[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)
@@ -94,7 +94,7 @@ export default function SchedulerUpdatesPage() {
   })
   const { success, error: showError } = useToast()
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   useEffect(() => {
     loadUpdates()

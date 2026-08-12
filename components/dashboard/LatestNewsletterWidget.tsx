@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { IconNotebook, IconChevronRight, IconEye, IconDownload } from '@tabler/icons-react'
 import { newslettersAPI } from '@/lib/api'
-import { NEWSLETTER_NAME } from '@/lib/siteConfig'
+import { NEWSLETTER_NAME, MODULES } from '@/lib/siteConfig'
 
 // Dynamically import PDFViewer to avoid SSR issues
 const PDFViewer = dynamic(() => import('@/app/portal/newsletter/PDFViewer'), {
@@ -46,6 +46,11 @@ export default function LatestNewsletterWidget() {
       setIsLoading(false)
     }
   }
+
+  // The widget's own footer links into the module's route, so it goes when the
+  // module does. After the hooks, not before: MODULES is a build-time constant,
+  // but rules-of-hooks reads an early return as a conditional hook call.
+  if (!MODULES.newsletter) return null
 
   if (isLoading) {
     return (

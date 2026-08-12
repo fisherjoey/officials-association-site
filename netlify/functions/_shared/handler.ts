@@ -20,6 +20,15 @@ import { Handler, HandlerEvent, HandlerContext as NetlifyContext } from '@netlif
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { Logger } from '../../../lib/logger'
 import { SITE_URL } from '../../../lib/siteConfig'
+import {
+  can,
+  hasRole,
+  toPrincipal,
+  DEFAULT_STRUCTURAL_ROLE,
+  type Capability,
+  type Principal,
+  type StructuralRole,
+} from '../../../lib/roles'
 import { errorResponse } from './errorResponse'
 export { errorResponse } from './errorResponse'
 export type { ErrorCode } from './errorResponse'
@@ -83,24 +92,38 @@ export async function findAuthUserByEmail(
 // Types
 // ---------------------------------------------------------------------------
 
-export type UserRole = 'official' | 'executive' | 'admin' | 'evaluator' | 'mentor'
-
 /**
  * Auth levels:
- *  - 'public'              — no auth required
- *  - 'authenticated'       — any logged-in user
- *  - 'admin'               — admin only
- *  - 'admin_or_executive'  — admin or executive
- *  - UserRole[]            — any of the listed roles
+ *  - 'public'                — no auth required
+ *  - 'authenticated'         — any logged-in user
+ *  - 'admin'                 — admin only
+ *  - 'admin_or_executive'    — admin or executive
+ *  - StructuralRole[]        — any of the listed rungs, exactly
+ *  - { capability: '…' }     — holds the named capability grant, at any rung
+ *
+ * The capability form is the one to reach for when the rule is "whoever does
+ * this job", not "whoever is senior enough". They are different questions and
+ * the old single scale could only ask the second one.
  */
-export type AuthLevel = 'public' | 'authenticated' | 'admin' | 'admin_or_executive' | UserRole[]
+export type AuthLevel =
+  | 'public'
+  | 'authenticated'
+  | 'admin'
+  | 'admin_or_executive'
+  | StructuralRole[]
+  | { capability: Capability }
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 export interface AuthUser {
   id: string
   email: string
-  role: UserRole
+  /** Rung on the org ladder. */
+  role: StructuralRole
+  /** Capability grants, orthogonal to `role`. */
+  capabilities: readonly Capability[]
+  /** The two together, for passing to `hasRole()` / `can()` from `lib/roles`. */
+  principal: Principal
   raw: Record<string, any>
 }
 
@@ -139,39 +162,51 @@ export interface CreateHandlerOptions {
 // Role helpers (exported so functions can do fine-grained checks)
 // ---------------------------------------------------------------------------
 
-/** Extract the effective role from a Supabase user object */
-export function getUserRole(user: Record<string, any>): UserRole {
-  const appRole = user?.app_metadata?.role
-  const userRole = user?.user_metadata?.role
-  const appRoles: string[] = user?.app_metadata?.roles || []
-  const userRoles: string[] = user?.user_metadata?.roles || []
-
-  // Direct role field — app_metadata takes precedence
-  const directRole = appRole || userRole
-  if (directRole) {
-    const normalized = directRole.toLowerCase()
-    if (['admin', 'executive', 'evaluator', 'mentor', 'official'].includes(normalized)) {
-      return normalized as UserRole
-    }
-  }
-
-  // Check roles arrays (highest privilege wins)
-  const allRoles = [...appRoles, ...userRoles].map(r => r.toLowerCase())
-  if (allRoles.includes('admin')) return 'admin'
-  if (allRoles.includes('executive')) return 'executive'
-  if (allRoles.includes('evaluator')) return 'evaluator'
-  if (allRoles.includes('mentor')) return 'mentor'
-
-  return 'official'
+/**
+ * Resolve a Supabase auth user to a structural role plus capability grants.
+ *
+ * Mirrors `getPrincipal()` in `contexts/AuthContext.tsx`, and has to keep
+ * mirroring it: the browser decides which controls to render and this decides
+ * whether to answer, so a disagreement is a button that 403s. Both defer to
+ * `toPrincipal()` in `lib/roles.ts` so the precedence rules exist once.
+ *
+ * The `user_metadata` fallback is the known hole in the README (PLAT-33).
+ * `user_metadata` is writable by the account itself with a plain authenticated
+ * call, so any user without a server-set `app_metadata.role` can name its own.
+ * It is preserved here rather than quietly fixed: the fix has to land in both
+ * resolvers at once and is tracked separately, and removing it in one place
+ * only would desynchronise the layers while looking like progress.
+ *
+ * The explicit `capabilities` list is read from `app_metadata` and nowhere else.
+ * That is narrower than it looks, and is not a boundary: `role` and `roles`
+ * below still fall back to `user_metadata`, and `toPrincipal()` derives a
+ * capability from either of them, so `user_metadata.role = 'evaluator'` yields
+ * a member holding the evaluator grant. PLAT-33 therefore reaches the
+ * capability grants as well as the rung. Closing it means dropping the
+ * `user_metadata` fallback from the role fields, not just withholding the
+ * `capabilities` key from it.
+ */
+export function getPrincipal(user: Record<string, any> | null | undefined): Principal {
+  return toPrincipal({
+    role: user?.app_metadata?.role || user?.user_metadata?.role,
+    roles: [
+      ...(user?.app_metadata?.roles ?? []),
+      ...(user?.user_metadata?.roles ?? []),
+    ],
+    capabilities: user?.app_metadata?.capabilities,
+  })
 }
 
-/** Check whether a role satisfies a given auth level */
-export function isAuthorized(role: UserRole, level: AuthLevel): boolean {
+/** Check whether a principal satisfies a given auth level */
+export function isAuthorized(principal: Principal, level: AuthLevel): boolean {
   if (level === 'public') return true
   if (level === 'authenticated') return true
-  if (level === 'admin') return role === 'admin'
-  if (level === 'admin_or_executive') return role === 'admin' || role === 'executive'
-  if (Array.isArray(level)) return level.includes(role)
+  if (level === 'admin') return hasRole(principal, 'admin')
+  if (level === 'admin_or_executive') return hasRole(principal, 'executive')
+  if (Array.isArray(level)) return principal.role !== null && level.includes(principal.role)
+  if (level && typeof level === 'object' && 'capability' in level) {
+    return can(principal, level.capability)
+  }
   return false
 }
 
@@ -360,15 +395,17 @@ export function createHandler(options: CreateHandlerOptions): Handler {
         return errorResponse({ code: 'unauthorized', headers: corsHeaders })
       }
 
-      const role = getUserRole(authUser)
+      const principal = getPrincipal(authUser)
       user = {
         id: authUser.id,
         email: authUser.email || 'unknown',
-        role,
+        role: principal.role ?? DEFAULT_STRUCTURAL_ROLE,
+        capabilities: principal.capabilities,
+        principal,
         raw: authUser as unknown as Record<string, any>,
       }
 
-      if (!isAuthorized(role, authLevel)) {
+      if (!isAuthorized(principal, authLevel)) {
         return errorResponse({ code: 'forbidden', headers: corsHeaders })
       }
     }

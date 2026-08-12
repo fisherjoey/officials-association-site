@@ -9,6 +9,26 @@ import { JoditEditor } from '@/components/JoditEditor'
 import { generateEmailTemplate } from '@/lib/emailTemplate'
 import { readFriendlyError, friendlyErrorFromThrown } from '@/lib/userFacingError'
 import { DEFAULT_AUTHOR } from '@/lib/siteConfig'
+import {
+  AUDIENCE_GROUPS,
+  audienceGroupsFor,
+  findAudienceGroup,
+  hasRole,
+  principalInAudienceGroup,
+  toPrincipal,
+  type Principal,
+} from '@/lib/roles'
+
+/**
+ * A row in the recipient picker. Carries a resolved principal rather than a
+ * role string, because group membership now asks two different questions —
+ * "what rung" and "which grants" — and a single string can only answer one.
+ */
+interface MailRecipient {
+  email: string
+  name: string
+  principal: Principal
+}
 
 export default function MailPage() {
   const { user, getAccessToken } = useAuth()
@@ -26,7 +46,7 @@ export default function MailPage() {
   const [rankFilter, setRankFilter] = useState('')
   const [memberSearch, setMemberSearch] = useState('')
   const [externalEmailInput, setExternalEmailInput] = useState('')
-  const [allMembers, setAllMembers] = useState<Array<{email: string, name: string, role: string}>>([])
+  const [allMembers, setAllMembers] = useState<MailRecipient[]>([])
   const [saveAsAnnouncement, setSaveAsAnnouncement] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [previewInitialized, setPreviewInitialized] = useState(false)
@@ -66,7 +86,7 @@ export default function MailPage() {
 
   // Redirect non-executives
   useEffect(() => {
-    if (user && user.role !== 'admin' && user.role !== 'executive') {
+    if (user && !hasRole(user, 'executive')) {
       router.push('/portal')
     }
   }, [user, router])
@@ -88,7 +108,7 @@ export default function MailPage() {
           setAllMembers(data.map((m: any) => ({
             email: m.email,
             name: `${m.first_name || ''} ${m.last_name || ''}`.trim() || m.name || m.email,
-            role: m.role || 'official'
+            principal: toPrincipal({ role: m.role, capabilities: m.capabilities }),
           })))
         }
       } catch (error) {
@@ -98,13 +118,18 @@ export default function MailPage() {
     fetchMembers()
   }, [getAccessToken])
 
+  // Built from AUDIENCE_GROUPS so this list and the one send-email.ts resolves
+  // cannot drift. "By Role" is the org ladder, "By Capability" is what someone
+  // does — the old flat list mixed the two under one heading and could not
+  // address an executive who also evaluates.
   const recipientGroups = [
     { id: 'all', label: 'All Members', description: 'Everyone in the portal', category: 'General' },
-    { id: 'officials', label: 'Officials', description: 'All official members', category: 'By Role' },
-    { id: 'executives', label: 'Executives', description: 'All executive members', category: 'By Role' },
-    { id: 'admins', label: 'Admins', description: 'All admin members', category: 'By Role' },
-    { id: 'evaluators', label: 'Evaluators', description: 'All evaluator members', category: 'By Role' },
-    { id: 'mentors', label: 'Mentors', description: 'All mentor members', category: 'By Role' },
+    ...AUDIENCE_GROUPS.map(g => ({
+      id: g.id,
+      label: g.label,
+      description: g.description,
+      category: g.role ? 'By Role' : 'By Capability',
+    })),
   ]
 
   // Group recipients by category
@@ -116,38 +141,24 @@ export default function MailPage() {
     return acc
   }, {} as Record<string, typeof recipientGroups>)
 
-  // Helper to check if a member belongs to a group based on role
-  const memberBelongsToGroup = (member: {role: string}, groupId: string): boolean => {
-    if (groupId === 'all') return true
-    if (groupId === 'officials' && member.role === 'official') return true
-    if (groupId === 'executives' && member.role === 'executive') return true
-    if (groupId === 'admins' && member.role === 'admin') return true
-    if (groupId === 'evaluators' && member.role === 'evaluator') return true
-    if (groupId === 'mentors' && member.role === 'mentor') return true
-    return false
-  }
+  // Helper to check if a member belongs to a group
+  const memberBelongsToGroup = (member: MailRecipient, groupId: string): boolean =>
+    principalInAudienceGroup(member.principal, groupId)
 
   // Check if member is selected via any group
-  const isMemberSelectedViaGroup = (member: {email: string, role: string}): boolean => {
+  const isMemberSelectedViaGroup = (member: MailRecipient): boolean => {
     if (excludedFromGroups.includes(member.email)) return false
     return selectedGroups.some(groupId => memberBelongsToGroup(member, groupId))
   }
 
   // Check if member is selected (either via group or manually)
-  const isMemberSelected = (member: {email: string, role: string}): boolean => {
+  const isMemberSelected = (member: MailRecipient): boolean => {
     return isMemberSelectedViaGroup(member) || manuallySelected.includes(member.email)
   }
 
   // Get groups that a member belongs to (for display)
-  const getMemberGroups = (member: {role: string}): string[] => {
-    const groups: string[] = []
-    if (member.role === 'official') groups.push('Official')
-    if (member.role === 'executive') groups.push('Executive')
-    if (member.role === 'admin') groups.push('Admin')
-    if (member.role === 'evaluator') groups.push('Evaluator')
-    if (member.role === 'mentor') groups.push('Mentor')
-    return groups
-  }
+  const getMemberGroups = (member: MailRecipient): string[] =>
+    audienceGroupsFor(member.principal)
 
   // Compute final selected emails
   const computedSelectedEmails = useMemo(() => {
@@ -197,7 +208,7 @@ export default function MailPage() {
   }
 
   // Toggle individual member selection
-  const toggleMemberSelection = (member: {email: string, role: string}) => {
+  const toggleMemberSelection = (member: MailRecipient) => {
     const isSelected = isMemberSelected(member)
     const isExcluded = excludedFromGroups.includes(member.email)
     const belongsToSelectedGroup = selectedGroups.some(groupId => memberBelongsToGroup(member, groupId))
@@ -367,7 +378,7 @@ export default function MailPage() {
     }
   }
 
-  if (!user || (user.role !== 'admin' && user.role !== 'executive')) {
+  if (!user || !hasRole(user, 'executive')) {
     return null
   }
 
@@ -507,12 +518,7 @@ export default function MailPage() {
                               key={group}
                               className={`text-xs px-1.5 py-0.5 rounded ${
                                 isViaGroup && selectedGroups.some(g =>
-                                  (g === 'officials' && group === 'Official') ||
-                                  (g === 'executives' && group === 'Executive') ||
-                                  (g === 'admins' && group === 'Admin') ||
-                                  (g === 'evaluators' && group === 'Evaluator') ||
-                                  (g === 'mentors' && group === 'Mentor') ||
-                                  (g === 'all')
+                                  g === 'all' || findAudienceGroup(g)?.label === group
                                 )
                                   ? 'bg-orange-200 dark:bg-orange-800 text-orange-800 dark:text-orange-200'
                                   : 'bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300'

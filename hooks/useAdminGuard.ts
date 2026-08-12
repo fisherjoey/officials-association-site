@@ -12,11 +12,12 @@ import { useRole } from '@/contexts/RoleContext'
  */
 export function useAdminGuard(redirectTo = '/portal') {
   const router = useRouter()
-  const { user } = useRole()
+  const { hasRole } = useRole()
+  const isAdmin = hasRole('admin')
 
   useEffect(() => {
-    if (user.role !== 'admin') {
+    if (!isAdmin) {
       router.push(redirectTo)
     }
-  }, [user.role, router, redirectTo])
+  }, [isAdmin, router, redirectTo])
 }

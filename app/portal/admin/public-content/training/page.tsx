@@ -12,7 +12,7 @@ import { getFieldError } from '@/lib/portalValidation'
 import type { PublicTrainingEvent } from '@/types/publicContent'
 
 export default function PublicTrainingAdmin() {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const { success, error, warning, info } = useToast()
   const [events, setEvents] = useState<PublicTrainingEvent[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -50,7 +50,7 @@ export default function PublicTrainingAdmin() {
   })
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   // Load training events from API
   useEffect(() => {

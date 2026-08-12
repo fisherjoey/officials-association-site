@@ -52,7 +52,7 @@ async function seedInvite(opts: {
       token,
       email,
       name: `${E2E_TAG} Invitee`,
-      role: 'official',
+      role: 'member',
       used_at: opts.used ? new Date().toISOString() : null,
     })
     .select('id')
@@ -68,7 +68,7 @@ async function seedInvite(opts: {
       {
         email,
         name: `${E2E_TAG} Invitee`,
-        role: 'official',
+        role: 'member',
         status: opts.memberStatus ?? 'active',
       },
       { onConflict: 'email' }
@@ -324,7 +324,7 @@ describe('accept-invite', () => {
             token,
             email,
             name: `${E2E_TAG} Stale`,
-            role: 'official',
+            role: 'member',
             used_at: null,
             expires_at: yesterday,
           })
@@ -334,7 +334,7 @@ describe('accept-invite', () => {
           {
             email,
             name: `${E2E_TAG} Stale`,
-            role: 'official',
+            role: 'member',
             status: 'active',
           },
           { onConflict: 'email' }

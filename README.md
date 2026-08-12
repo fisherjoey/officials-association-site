@@ -68,7 +68,7 @@ Most members open this between games, on a phone.
 
 ## This is a static export
 
-`next.config.js` sets `output: 'export'` for production builds. `npm run build` writes a
+`next.config.ts` sets `output: 'export'` for production builds. `npm run build` writes a
 directory of HTML, CSS and JS to `out/`, and that is the whole front end. No Node server
 renders pages on request.
 
@@ -85,6 +85,11 @@ The constraint that catches people out: a broken import or a wrong asset path sh
 blank page or a silent 404, not a build failure. Look at the pages after a change. A green
 build is not evidence. Dev mode renders dynamically, so something can work locally and still
 be missing from the export.
+
+`node scripts/check-exported-links.mjs` catches part of that after a build: it reads every
+local `href` out of `out/` and fails on any that resolves to nothing. It is also why
+switching a portal module off has to happen at build time rather than at request time, which
+[Optional modules](#optional-modules) goes into.
 
 ---
 
@@ -166,17 +171,18 @@ The migrations enable RLS on every table and grant `anon`, `authenticated` and
 `service_role` explicitly, so nothing relies on Supabase's legacy auto-exposure of new
 tables. The shape is:
 
-`members`. You can read and update your own row. Admins and executives can read and update
-everyone's. A trigger stops an unprivileged PostgREST session from setting or changing its
-own `role` or `user_id`, even on its own row.
+`members`. You can read your own row. Admins and executives can read everyone's. Nobody
+writes this table from the browser: `authenticated` is granted SELECT and nothing else, so
+every roster write goes through a function holding the service-role key. A trigger is the
+second barrier, stopping an unprivileged session from setting or changing its own `role`,
+`capabilities` or `user_id` on the day someone re-grants UPDATE.
 
-`evaluations`. You can read the evaluations written about you. Admins and executives can
-read all of them and are the only ones who can write. That is the SQL layer. The function
-layer is looser and it is the one the portal goes through: `netlify/functions/evaluations.ts`
-also admits `evaluator` to read every evaluation and to create one, and lets an evaluator
-edit an evaluation they wrote. The functions hold the service-role key, so no policy below
-them applies. See [Documented assumptions](#documented-assumptions) on the roles that exist
-only in the function layer.
+`evaluations`. You can read the evaluations written about you. Admins, executives and anyone
+holding the `evaluator` capability can read all of them. Admins, executives and evaluators can
+write one; only admins and executives can edit or delete. `netlify/functions/evaluations.ts`
+applies the same rule before a request reaches the database, and adds one thing a policy
+cannot express: an evaluator may edit an evaluation they authored, which needs the author
+joined back to the caller.
 
 Public content (`public_news`, `public_training_events`, `public_resources`,
 `public_pages`). Anyone can read the active rows, anonymous visitors included, because the
@@ -184,9 +190,51 @@ public site reads them straight from the browser. Admins and executives write.
 
 Everything else is service-role only and reachable through the functions.
 
-`public.is_admin(uid)` and `public.is_admin_or_executive(uid)` are the single place the
-policies ask whether a caller is privileged. They are the seam to change when your role
-model grows.
+`public.structural_role(uid)` is the only function in the schema that reads `members.role`.
+`public.is_admin(uid)` and `public.is_admin_or_executive(uid)` are thin wrappers over it, and
+`public.has_capability(uid, cap)` answers the capability half. Those four are where the
+policies ask who is calling.
+
+### The role model
+
+Two questions, deliberately kept in two columns.
+
+**Structural role** is where someone sits: `member` < `executive` < `admin`. Ordered, one per
+person.
+
+**Capabilities** are what someone does: `evaluator`, `scheduler`, `instructor`, `assignor`,
+`mentor`. Unordered, any number at once, independent of the ladder. A member can be an
+evaluator. So can an executive.
+
+Collapsing the two is what kept `evaluator` out of the database for so long. One ordered field
+cannot say "a member, but also an evaluator" without inventing a rung for every combination,
+and every new rung multiplies through every policy in the schema. Split apart, the policy is
+one line: `has_capability(auth.uid(), 'evaluator')`.
+
+`lib/roles.ts` is the definition. The UI, the Netlify Functions and the tests import from it,
+and `__tests__/unit/config/roles.test.ts` reads
+`supabase/migrations/20260810001500_role_model.sql` off disk and fails when the file and the
+schema stop agreeing. That test is doing the real work here. The bug was never a missing
+check; it was one idea written down in three places that could drift apart.
+
+Two things you can change without writing SQL. Labels come from `NEXT_PUBLIC_ROLE_LABEL_*` and
+`NEXT_PUBLIC_CAPABILITY_LABEL_*`, and nothing in SQL reads them, so calling your executives
+"the board" is one line in `.env`. The capability list itself lives in `lib/roles.ts`: the
+database constrains the shape of `members.capabilities` (lowercase identifiers, no duplicates)
+and never its contents, and `has_capability()` compares whatever string it is handed, so
+adding or renaming one needs no migration.
+
+There is one exception, worth knowing before you rename anything. `evaluator` is written into
+an RLS policy by hand, because a policy has to name the capability it is testing. Rename that
+slug and the migration needs the new name too. The config test fails and says so rather than
+letting the policy quietly stop matching.
+
+The structural ladder is enumerated by a CHECK constraint, so renaming one of those three is a
+migration. They are the org chart, so that should be rare.
+
+`official` was the old name for `member`. It is still accepted on the way in, so an auth user
+carrying `app_metadata.role = 'official'` resolves to a member, but it is no longer a value
+the database will store.
 
 ### Auth configuration
 
@@ -202,9 +250,10 @@ Turn off self-service signup, unless you have read [Known gaps](#known-gaps) and
 role-resolution hole. With signup on, anyone can create an account and then grant themselves
 admin.
 
-Roles live in the auth user's `app_metadata.role` (`official`, `executive`, `admin`,
-`evaluator`, `mentor`) and are mirrored onto `members.role`. Only the service role can write
-`app_metadata`.
+Roles live in the auth user's `app_metadata` and are mirrored onto the roster row.
+`app_metadata.role` is the structural rung (`member`, `executive`, `admin`) and
+`app_metadata.capabilities` is an array of grants (`evaluator`, `scheduler`, `instructor`,
+`assignor`, `mentor`). Only the service role can write `app_metadata`.
 
 ---
 
@@ -282,10 +331,12 @@ Other scripts:
 
 | Command | Does |
 |---|---|
-| `npm test` | Unit tests. 317 across 18 suites, no external services. |
+| `npm test` | Unit tests. 386 across 24 suites, no external services. |
 | `npm run test:integration` | Integration tests against a real Supabase project. Needs `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Creates and cleans up tagged rows and a couple of throwaway auth users. |
+| `node scripts/check-exported-links.mjs` | Run after a build. Reads every local `href` out of `out/` and fails on any that resolves to nothing. |
 | `npm run build` | The production static export, into `out/`. |
-| `npx tsc --noEmit` | Type check. Use this one; `npm run lint` checks nothing, for the reason in [Known gaps](#known-gaps). |
+| `npx tsc --noEmit` | Type check. |
+| `npm run lint` | ESLint, via `eslint.config.mjs` (`next/core-web-vitals`). Also runs as part of `npm run build`, since `next.config.ts` sets `eslint.ignoreDuringBuilds: false`. |
 
 ---
 
@@ -346,6 +397,104 @@ it, rename it, or delete the route. The name is also a literal in the main navig
 page whether or not you keep the route behind it.
 
 Grep for your old organisation's name after a rebrand. It is the only reliable check.
+
+---
+
+## Optional modules
+
+Not every association wants the whole portal. Eight parts of it are switchable, in `MODULES`
+in `lib/siteConfig.ts` or through the matching `NEXT_PUBLIC_MODULE_*` variables. Everything
+ships on, so you can see what is there before deciding what to cut.
+
+| Module | Route | What it is | What it needs | Why you might turn it off |
+|---|---|---|---|---|
+| `evaluations` | `/portal/evaluations` | Evaluators file reports on officials; executives read them and track who has been assessed. | The evaluations tables, plus members carrying the evaluator role. | Your association assesses people in person and nobody wants to retype it into a form. |
+| `statistics` | `/portal/statistics` | Per-official game counts for a season, loaded from an Arbiter xlsx export. | The season-stats tables, and exports in the exact shape `lib/stats/arbiterGameInfo.ts` parses. | You do not use Arbiter. Note that nothing links to this route even when it is on, so it is the least missed of the eight. |
+| `newsletter` | `/portal/newsletter` | A PDF archive with an in-page viewer, and the latest-issue widget on the dashboard. | Somewhere to upload the PDFs, and somebody willing to write them. | You do not publish one. |
+| `ruleModifications` | `/portal/rule-modifications` | League-specific variations on the rulebook, written as markdown in `content/portal/rule-modifications/`. | Nothing beyond the content files. | Every league you serve plays the standard rules. |
+| `schedulerUpdates` | `/portal/scheduler-updates` | Short notices from whoever assigns games, and the matching dashboard widget. | Nothing. | Your scheduler already reaches people by email, or through the assigning system's own announcements. |
+| `mail` | `/portal/mail` | Compose and send to members, filtered by role. Admin and executive only. | A configured email provider (`EMAIL_PROVIDER` and its keys). | You send association mail from a list somewhere else. This is the first one to drop if you have not set up a provider. |
+| `adminLogs` | `/portal/admin/logs` | Reader for the application log and audit trail. | The `logs` table and the `logs` function. | You would rather read them in the Supabase dashboard, where you can write a real query. |
+| `adminEmailHistory` | `/portal/admin/email-history` | Every message the portal has sent, with delivery status. | The email-history table and its function. | Same reason, or you do not want a copy of the send history in the portal at all. |
+
+### What "off" actually does
+
+It stops the route being built. This is a static export, so there is no server standing by to
+answer a request with a 404: a route is either sitting in `out/` as HTML or it does not
+exist. Each optional route's page file is called `page.module-<key>.tsx` rather than
+`page.tsx`, and `next.config.ts` only tells Next.js to treat that filename as a route when
+the flag is on. Off, the file is never compiled, no chunk is emitted, and there is no
+directory under `out/`. Netlify serves your 404 page to anyone who has the URL.
+
+The navigation reads the same flags. `isRouteEnabled()` takes an href rather than a module
+name, so the portal header, the dashboard tiles and the admin index all put the question to
+one source instead of each keeping a list of their own. Two lists that have to agree is the
+bug this design exists to avoid: a hidden link with a live route behind it is merely
+confusing, but a live link with no route behind it is a 404 that a member finds for you.
+
+Three things it does not do:
+
+It is not access control. The Netlify Function and the Supabase table behind a disabled
+module are untouched, and anyone who can authenticate can still reach the function directly.
+Authorisation lives in `netlify/functions/` and in RLS, and that is where it stays. If you
+need a capability gone rather than absent from the site, delete the function and revoke the
+grants.
+
+It is not a runtime switch. The flags are read once, while you build. Changing one means a
+rebuild and a redeploy, and a browser holding the previous bundle keeps the previous
+navigation until it reloads.
+
+It does not delete anything. Rows stay in Supabase. Switch the module back on, rebuild, and
+everything is where you left it.
+
+One cosmetic oddity: the build summary reports a gated route's size as `0 B`. Next.js sizes
+routes by looking for a file called `page`, and these are not called that. The chunk is built
+and loaded like any other.
+
+### Adding or removing one
+
+To gate a route that is not on the list, add a key to `ModuleKey`, a flag to `MODULES` and an
+entry to `PORTAL_MODULES` in `lib/siteConfig.ts`, then rename the route's `page.tsx` to
+`page.module-<kebab-key>.tsx`. `__tests__/unit/config/modules.test.ts` fails if those four
+drift apart, and the two `__tests__/unit/portal/moduleNav*.test.tsx` files fail if the
+navigation stops asking.
+
+To remove a route outright, delete its directory and every link to it, then rebuild and run
+the link check:
+
+```bash
+npm run build && node scripts/check-exported-links.mjs
+```
+
+It pulls every `href` out of every exported page and asks the filesystem whether the target
+resolves. It only sees prerendered markup, though, so it cannot check the portal navigation
+at all: everything behind `AuthGuard` prerenders as a loading spinner. The two `moduleNav`
+test files are what cover that half.
+
+---
+
+## Who gets into the portal
+
+`app/portal/layout.tsx` wraps every portal page in one chain, and the order is load-bearing:
+
+```
+ThemeProvider → AuthProvider → AuthGuard → RoleProvider → MemberProvider → ToastProvider → MemberGuard
+```
+
+Two gates, asking different questions. `AuthGuard` asks whether somebody is logged in and
+sends everyone else to the login page. `MemberGuard` asks whether that logged-in user has a
+member record, and when they do not it renders the registration form inline instead of
+redirecting.
+
+The inline render is deliberate. Someone accepting an invitation and someone signing up on
+their own both land on a portal route holding an account with no member row behind it, and
+both get the same form in the same place. Redirecting would mean a separate registration
+route, a way of remembering where they were going, and two flows to keep working instead of
+one.
+
+Leave the ordering alone. `RoleProvider` and `MemberProvider` both read the session that
+`AuthProvider` establishes and `AuthGuard` has already vouched for, so moving either above
+the guard gives you a provider reading a session that may not exist.
 
 ---
 
@@ -427,7 +576,7 @@ exists to prevent.
 
 ### Role resolution trusts user-writable metadata, and this is a blocker
 
-`getUserRole()` in `netlify/functions/_shared/handler.ts` reads the caller's role from
+`getPrincipal()` in `netlify/functions/_shared/handler.ts` reads the caller's role from
 `app_metadata.role` first and falls back to `user_metadata.role`. `app_metadata` is
 server-controlled. `user_metadata` is written by the user, with an ordinary authenticated
 call to Supabase's `PUT /auth/v1/user`.
@@ -445,15 +594,25 @@ member roster (names, emails, phone numbers, addresses, emergency contacts), eve
 evaluation, every contact submission and the system logs.
 
 Row-level security is not the hole. The policies in `supabase/migrations/` are written
-against `members.role`, which a user cannot change, and they hold: a plain official querying
-PostgREST directly sees only their own member row and their own evaluations. The hole is
-that the functions run with the service-role key, RLS never applies to them, and their own
-role check is the only thing standing there.
+against `members.role` and `members.capabilities`, neither of which a user can change, and
+they hold: a plain member querying PostgREST directly sees only their own member row and
+their own evaluations. The hole is that the functions run with the service-role key, RLS
+never applies to them, and their own role check is the only thing standing there.
+
+The capabilities are reachable the same way. `getPrincipal()` takes the literal
+`capabilities` key from `app_metadata` only, but it reads `role` and `roles` from
+`user_metadata` too, and a capability slug sitting in either of those resolves to a member
+holding that grant. Send `{"data": {"role": "evaluator"}}` in place of `admin` above and the
+account reads every evaluation in the association, because `netlify/functions/evaluations.ts`
+holds the same service-role key. Admin is still the worse outcome, but not because the
+capability half is protected.
 
 Until it is fixed, turn off self-service signup in Supabase Auth and set
 `app_metadata.role` on every user through the service role. The fix itself is to stop
-reading `user_metadata` in `getUserRole()`, both in `netlify/functions/_shared/handler.ts`
-and in `contexts/AuthContext.tsx`, which carries the same fallback. Tracked as PLAT-33.
+reading `user_metadata` for `role` and `roles`, in `getPrincipal()` in
+`netlify/functions/_shared/handler.ts` and in `contexts/AuthContext.tsx`, which carries the
+same fallback. Both fields feed the rung and the capability grants, so dropping the fallback
+closes both. Tracked as PLAT-33.
 
 ### Supabase Storage ships with no policy layer
 
@@ -465,14 +624,40 @@ That is the whole protection. Make a bucket public and there is no row-level lay
 underneath it: every object in that bucket becomes world-readable by URL. Write your own
 policies before you do. Tracked as PLAT-36.
 
-### `npm run lint` does not lint
+### `npm audit` still has ten production findings
 
-The script runs `next lint`, but there is no ESLint configuration anywhere in the
-repository, so it exits successfully having checked nothing. `next.config.js` sets
-`eslint.ignoreDuringBuilds: false` with a comment about lint errors failing the build, and
-with no config to load that is inert too.
+`npm audit --omit=dev` used to report 42 vulnerabilities in production dependencies, 40 of
+them high. Most of that came from two packages nothing in the app actually imports:
+`decap-cms-app` (the CMS admin bundle, dead code since Decap CMS was pulled from this fork)
+and `pdfjs-dist` / `react-pdf` (`PDFViewer.tsx` renders PDFs with a plain
+`<object>`/`<iframe>`, not a PDF.js canvas; react-pdf was never wired up, and a 1.1MB
+`public/pdf.worker.min.js` was shipping in every build without a single request for it).
+Dropping both, then running `npm audit fix` for what it could resolve without a major bump,
+took the count from 42 down to 10: 2 low, 8 high.
 
-Use `npx tsc --noEmit` instead. A green build is not lint evidence. Tracked as PLAT-42.
+What's left, and why it's staying for now:
+
+- **`next` → `postcss` / `sharp` (high).** The fix is Next 16, and this lane doesn't touch
+  Next's major version. Both are build-time tools here: `output: 'export'` plus
+  `images: { unoptimized: true }` means Next's sharp-based image server never runs in this
+  app, and postcss only ever processes this repo's own Tailwind source, never
+  user-supplied CSS. Not reachable from a request.
+- **`@netlify/functions` → `@netlify/blobs`, `@netlify/dev-utils`, `image-size`, and,
+  separately, `esbuild` / `@netlify/zip-it-and-ship-it` (high and low).** The fix is
+  `@netlify/functions@5`, a major bump touching every one of the 12 function handlers that
+  import `Handler` / `HandlerEvent` from it. That's enough surface to need its own lane,
+  tested against a real deploy, rather than a drive-by fix here. Checked what actually runs,
+  though: the package's deployed entry point (`dist/main.cjs`) only requires Node's own
+  `process`, `stream` and `util`. Blobs, dev-utils and the esbuild-based bundler sit behind
+  the package's `/dev` (local CLI) subpath, which nothing in this repo imports. None of it is
+  reachable from a running function, only from local tooling.
+- **`xlsx` (high, no fix available).** SheetJS stopped publishing patched versions to npm;
+  the fix exists only on their own CDN, outside what `npm audit` can resolve.
+  `lib/stats/readWorkbook.ts` is the only importer, runs entirely in the browser, and only
+  ever parses a file the uploading portal member hands it themselves through
+  `StatsUploadModal.tsx`. Worst case is a member attacking their own browser tab, not a
+  public attack surface, but it's unresolved, and stays that way until SheetJS (or a
+  maintained fork) publishes a real fix to npm.
 
 ### Stats ingestion assumes Arbiter xlsx exports
 
@@ -518,9 +703,10 @@ whose real inbox you would rather not have derived.
 value in `lib/siteConfig.ts` is non-empty and vanishes when it is not. There is no flag
 registry and no per-member entitlement.
 
-**Roles are a fixed list**: `official`, `executive`, `admin`, `evaluator`, `mentor`, with
-capability checks written inline in each function. `evaluator` and `mentor` have no SQL
-grants of their own and exist only in the function layer.
+**Roles are two lists, not one.** The structural ladder (`member`, `executive`, `admin`) is
+enumerated in the schema. Capabilities (`evaluator`, `scheduler`, `instructor`, `assignor`,
+`mentor`) are a config list the database does not enumerate. Both are defined in
+`lib/roles.ts`. See [The role model](#the-role-model).
 
 ---
 
