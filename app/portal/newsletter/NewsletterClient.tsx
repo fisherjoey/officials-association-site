@@ -439,7 +439,7 @@ export default function NewsletterClient({ newsletters: initialNewsletters }: Ne
                     fileName={`${newsletter.title}.pdf`}
                     className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
                     title="Download"
-                    onError={(message) => error(message)}
+                    onError={(message) => error('Download Failed', message)}
                   >
                     <IconDownload className="h-4 w-4" />
                   </FileDownloadLink>

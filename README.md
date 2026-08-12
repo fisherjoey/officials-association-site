@@ -240,12 +240,27 @@ reader's own JWT, so the SELECT policy that governs a download also decides whet
 can be minted at all. A member who cannot read the object cannot get a URL for it either,
 which is the point. There is no second access model here to keep in step with the policies.
 
-Links last five minutes, and each one is minted for a single use of it. `<FileDownloadLink>`
-signs when you click it; the viewers sign when they open. A list of forty resources costs no
-storage requests until somebody wants one of them, and a tab left open all afternoon strands
-nothing, because the next click mints a new link. A download link also asks storage for
-`Content-Disposition: attachment`, since the `download` attribute on an `<a>` is ignored
-cross-origin and is not enough on its own.
+Links last five minutes. Every button that points at an uploaded file goes through
+`<FileDownloadLink>`, which mints inside the click, so a download or an open-in-a-tab hands
+the browser a URL that is seconds old however long the page has been sitting there, and a list
+of forty resources costs no storage requests until somebody wants one of them. A download link
+also asks storage for `Content-Disposition: attachment`, since the `download` attribute on an
+`<a>` is ignored cross-origin and is not enough on its own. When a mint is refused, the button
+says so instead of doing nothing. The one plain anchor left is in the public content editor
+under `/portal/admin/public-content/resources`, where `file_url` is a URL an admin types into a
+form rather than anything this application uploaded.
+
+Within those five minutes `resolveFileUrl()` remembers what it minted and gives the same
+string back to anything that asks again, so a viewer re-rendering three times costs one round
+trip rather than three. It stops reusing a link thirty seconds before the token dies, so a
+download never starts against a URL that expires mid-transfer.
+
+Embeds are the case that has to be handled rather than asserted. A viewer signs once when it
+opens. That is fine for an `<img>` or a PDF, which have finished fetching long before the
+token dies, and not fine for `<video>` or `<audio>`, which go on issuing range requests as
+playback and seeking continue and would otherwise stop mid-clip at the five minute mark. Those
+elements re-mint on their own error and put the member back where they were. Nothing else in
+the portal holds a minted URL in an attribute waiting to be clicked.
 
 `email-images` is the exception and stays on `getPublicUrl()`. Those images are embedded in
 outgoing mail, the recipient opens that mail in Gmail with no Supabase session, and a signed
@@ -707,17 +722,31 @@ reading `user_metadata` for `role` and `roles`, in `getPrincipal()` in
 same fallback. Both fields feed the rung and the capability grants, so dropping the fallback
 closes both. Tracked as PLAT-33.
 
-### An official cannot open the evaluation written about them
+### Evaluation attachments only open for the member who uploaded them
 
-The `evaluations` table lets an official read the evaluations written about them. The bucket
-does not. Object ownership records who uploaded a file, nothing in the object key says who it
-is about, and the SELECT policy scopes reads to the uploader (the evaluator) plus admins and
-executives. The portal lists those rows for the official with a download button on each, and
-the button fails with a message saying so.
+The `evaluations` table and the `evaluations` bucket disagree about who may read a report, and
+the portal shows a download button to everyone the table lets in.
 
-Closing this needs a path convention the upload path writes first, `<member_uuid>/<file>`,
-and a policy that reads the member id back out of the key. Until then an official gets their
-evaluation from the evaluator rather than from the portal.
+`evaluations_select_capability_or_subject` (migration 0015) gives the row to the official the
+evaluation is about, to admins and executives, and to anyone holding the `evaluator`
+capability. `evaluations_select_owner_or_admin` on `storage.objects` (migration 0014, written
+before capabilities existed) gives the object to whoever uploaded it, plus admins and
+executives. So two people see a row with a download button on it and get "We couldn’t open that
+file" when they press it: the official the report is about, and any evaluator other than the
+one who wrote it. The second is the more common of the two, since reading a colleague's
+report is most of what the evaluator capability is for.
+
+The two halves want different fixes. The evaluator half is one line of SQL now that 0015 has
+put `has_capability(auth.uid(), 'evaluator')` within reach of a policy, which is what 0014's
+header said it was waiting for. It also widens read access to every evaluation file in the
+association, so it is a change to make on purpose rather than in passing. The subject half
+cannot be written at all while object keys say nothing about who the evaluation is about; that
+wants a `<member_uuid>/<file>` convention the upload path writes first, and a policy that reads
+the member id back out of the key. Until both land, an official and a second evaluator get the
+report from the evaluator who wrote it rather than from the portal.
+
+`__tests__/integration/signed-downloads.test.ts` pins both refusals as they currently stand, so
+closing either one fails the test that says it is still open and points back here.
 
 ### `access_level` on a resource gates the row, not the file
 

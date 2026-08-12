@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { IconX, IconDownload, IconExternalLink, IconMaximize, IconMinimize, IconLink, IconArticle } from '@tabler/icons-react'
 import { HTMLViewer } from './HTMLViewer'
 import Modal from '@/components/ui/Modal'
@@ -26,11 +26,50 @@ interface ResourceViewerProps {
 export default function ResourceViewer({ resource, onClose }: ResourceViewerProps) {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [iframeError, setIframeError] = useState(false)
-  // Minted when the modal opens, so the link lives about as long as the view
-  // it was rendered for. The file type is read off the stored reference
-  // rather than this URL — a signed URL carries a `?token=` the extension
-  // sniffing below would swallow.
-  const { url: fileUrl, isLoading: isResolvingFile, error: fileError } = useFileUrl(resource.fileUrl)
+  // Minted when the modal opens, and only ever handed to something that
+  // fetches it immediately — an `<img>`, a PDF embed, a media element. Every
+  // button below goes through `<FileDownloadLink>`, which mints inside the
+  // click, because an href set at open time is dead five minutes later and a
+  // member reading a document for six minutes would click it into a raw
+  // storage 400. The file type is read off the stored reference rather than
+  // this URL — a signed URL carries a `?token=` the extension sniffing below
+  // would swallow.
+  const {
+    url: fileUrl,
+    isLoading: isResolvingFile,
+    error: fileError,
+    refresh: refreshFileUrl,
+  } = useFileUrl(resource.fileUrl)
+  // A refused mint from one of the buttons. `fileError` is the embed's own
+  // failure and renders in place of the content; this one is a click that
+  // went nowhere and would otherwise be silent.
+  const [linkError, setLinkError] = useState<string | null>(null)
+
+  // Media keeps fetching after the token dies, so a mid-playback error is
+  // most likely an expired link rather than a broken file. Re-mint, then put
+  // the member back where they were. Rate-limited because an unplayable codec
+  // fails the same way and would otherwise re-mint in a loop forever.
+  const resumeAtRef = useRef(0)
+  const wasPlayingRef = useRef(false)
+  const lastRemintRef = useRef(0)
+
+  const handleMediaError = (event: React.SyntheticEvent<HTMLMediaElement>) => {
+    const el = event.currentTarget
+    const now = Date.now()
+    if (now - lastRemintRef.current < 5000) return
+    lastRemintRef.current = now
+    resumeAtRef.current = el.currentTime || 0
+    wasPlayingRef.current = !el.paused
+    refreshFileUrl()
+  }
+
+  const handleMediaReady = (event: React.SyntheticEvent<HTMLMediaElement>) => {
+    if (resumeAtRef.current <= 0) return
+    const el = event.currentTarget
+    el.currentTime = resumeAtRef.current
+    resumeAtRef.current = 0
+    if (wasPlayingRef.current) void el.play().catch(() => {})
+  }
 
   const getFileType = (url: string) => {
     const extension = url.split('.').pop()?.toLowerCase()
@@ -256,19 +295,20 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
                 <FileDownloadLink
                   fileRef={resource.fileUrl}
                   className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
+                  onError={setLinkError}
                 >
                   <IconDownload className="h-5 w-5" />
                   Download PDF
                 </FileDownloadLink>
-                <a
-                  href={fileUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <FileDownloadLink
+                  fileRef={resource.fileUrl}
+                  mode="view"
                   className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 flex items-center gap-2"
+                  onError={setLinkError}
                 >
                   <IconExternalLink className="h-5 w-5" />
                   Open in New Tab
-                </a>
+                </FileDownloadLink>
               </div>
             </div>
           )
@@ -307,6 +347,8 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
             controls
             className="w-full h-full"
             controlsList="nodownload"
+            onError={handleMediaError}
+            onLoadedMetadata={handleMediaReady}
           >
             Your browser does not support the video tag.
           </video>
@@ -319,6 +361,8 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
               src={fileUrl}
               controls
               className="w-full max-w-md"
+              onError={handleMediaError}
+              onLoadedMetadata={handleMediaReady}
             >
               Your browser does not support the audio tag.
             </audio>
@@ -345,19 +389,20 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
               <FileDownloadLink
                 fileRef={resource.fileUrl}
                 className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 flex items-center gap-2"
+                onError={setLinkError}
               >
                 <IconDownload className="h-5 w-5" />
                 Download File
               </FileDownloadLink>
-              <a
-                href={fileUrl}
-                target="_blank"
-                rel="noopener noreferrer"
+              <FileDownloadLink
+                fileRef={resource.fileUrl}
+                mode="view"
                 className="bg-gray-600 text-white px-6 py-3 rounded-lg hover:bg-gray-700 flex items-center gap-2"
+                onError={setLinkError}
               >
                 <IconExternalLink className="h-5 w-5" />
                 Open in New Tab
-              </a>
+              </FileDownloadLink>
             </div>
           </div>
         )
@@ -369,6 +414,7 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
             <FileDownloadLink
               fileRef={resource.fileUrl}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
+              onError={setLinkError}
             >
               <IconDownload className="h-5 w-5" />
               Download File
@@ -407,6 +453,7 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
                 fileRef={resource.fileUrl}
                 className="p-2 text-blue-400 hover:text-blue-800 hover:bg-blue-50 rounded"
                 title="Download"
+                onError={setLinkError}
               >
                 <IconDownload className="h-5 w-5" />
               </FileDownloadLink>
@@ -431,6 +478,18 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
             </button>
           </div>
         </div>
+
+        {/* A download or open-in-a-tab click that storage refused. Without
+            this the button is a silent no-op and the member is left clicking
+            it again. */}
+        {linkError && (
+          <div
+            role="alert"
+            className="mt-3 -mx-6 px-6 py-2 bg-red-50 dark:bg-red-900/20 text-sm text-red-700 dark:text-red-300"
+          >
+            {linkError}
+          </div>
+        )}
 
         {/* Content */}
         <div className="flex-1 overflow-hidden mt-4 -mx-6 px-0">

@@ -412,7 +412,7 @@ export default function EvaluationsPage() {
                       mode="view"
                       className="p-1.5 text-blue-400 hover:bg-blue-900/30 rounded"
                       title="View"
-                      onError={(message) => error(message)}
+                      onError={(message) => error('Download Failed', message)}
                     >
                       <IconExternalLink className="h-4 w-4" />
                     </FileDownloadLink>
@@ -421,7 +421,7 @@ export default function EvaluationsPage() {
                       fileName={evaluation.file_name}
                       className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
                       title="Download"
-                      onError={(message) => error(message)}
+                      onError={(message) => error('Download Failed', message)}
                     >
                       <IconDownload className="h-4 w-4" />
                     </FileDownloadLink>
@@ -496,7 +496,7 @@ export default function EvaluationsPage() {
                                 mode="view"
                                 className="p-1.5 text-blue-400 hover:bg-blue-900/30 rounded"
                                 title="View"
-                                onError={(message) => error(message)}
+                                onError={(message) => error('Download Failed', message)}
                               >
                                 <IconExternalLink className="h-4 w-4" />
                               </FileDownloadLink>
@@ -505,7 +505,7 @@ export default function EvaluationsPage() {
                                 fileName={evaluation.file_name}
                                 className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
                                 title="Download"
-                                onError={(message) => error(message)}
+                                onError={(message) => error('Download Failed', message)}
                               >
                                 <IconDownload className="h-4 w-4" />
                               </FileDownloadLink>
@@ -550,7 +550,7 @@ export default function EvaluationsPage() {
                   mode="view"
                   className="p-1.5 text-blue-400 hover:bg-blue-900/30 rounded"
                   title="View"
-                  onError={(message) => error(message)}
+                  onError={(message) => error('Download Failed', message)}
                 >
                   <IconExternalLink className="h-4 w-4" />
                 </FileDownloadLink>
@@ -559,7 +559,7 @@ export default function EvaluationsPage() {
                   fileName={evaluation.file_name}
                   className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
                   title="Download"
-                  onError={(message) => error(message)}
+                  onError={(message) => error('Download Failed', message)}
                 >
                   <IconDownload className="h-4 w-4" />
                 </FileDownloadLink>

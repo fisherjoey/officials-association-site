@@ -24,17 +24,28 @@ import {
   resolveFileUrl,
 } from '@/lib/fileDownload'
 import { toStorageRef } from '@/lib/storageRefs'
+import { canViewAllEvaluations, toPrincipal } from '@/lib/roles'
 
 let adminUser: TestUser
 let m1: TestUser
 let m2: TestUser
+/** Writes the report. Two of them, because the gap is between evaluators. */
+let ev1: TestUser
+let ev2: TestUser
 let m1C: SupabaseClient
 let m2C: SupabaseClient
+let ev1C: SupabaseClient
+let ev2C: SupabaseClient
 let adminC: SupabaseClient
 let anonC: SupabaseClient
 
+/** `members.id` for each user, needed to write an `evaluations` row. */
+const memberIds = new Map<string, string>()
+
 /** Every object this suite writes, so teardown can remove it as service role. */
 const written: { bucket: string; path: string }[] = []
+/** Every `evaluations` row this suite writes. */
+const evaluationIds: string[] = []
 
 function key(name: string): string {
   return `${E2E_TAG}-${Date.now()}-${Math.floor(Math.random() * 1e6)}-${name}`
@@ -58,13 +69,39 @@ function clientFor(token?: string): SupabaseClient {
  */
 async function linkMemberRow(user: TestUser): Promise<void> {
   const sb = getSupabaseAdmin()
-  const { error } = await sb.from('members').insert({
-    user_id: user.id,
-    email: user.email,
-    name: `E2E ${user.role}`,
-    role: user.structuralRole,
-  })
+  const { data, error } = await sb
+    .from('members')
+    .insert({
+      user_id: user.id,
+      email: user.email,
+      name: `E2E ${user.role}`,
+      role: user.structuralRole,
+      // `has_capability()` reads this column, not the JWT, for the same reason
+      // `is_admin_or_executive()` reads `role` — a policy cannot see a token.
+      capabilities: user.capabilities,
+    })
+    .select('id')
+    .single()
   if (error) throw new Error(`linkMemberRow failed for ${user.role}: ${error.message}`)
+  memberIds.set(user.id, data.id)
+}
+
+/** Write the row the portal renders a download button on, as service role. */
+async function seedEvaluation(subject: TestUser, evaluator: TestUser, ref: string, fileName: string) {
+  const sb = getSupabaseAdmin()
+  const { data, error } = await sb
+    .from('evaluations')
+    .insert({
+      member_id: memberIds.get(subject.id),
+      evaluator_id: memberIds.get(evaluator.id),
+      file_url: ref,
+      file_name: fileName,
+    })
+    .select('id')
+    .single()
+  if (error) throw new Error(`seedEvaluation failed: ${error.message}`)
+  evaluationIds.push(data.id)
+  return data.id as string
 }
 
 /** Put known bytes in a bucket as the service role, bypassing the policies. */
@@ -95,17 +132,23 @@ function tokenClaims(signedUrl: string): { exp: number; iat: number } {
 }
 
 beforeAll(async () => {
-  ;[adminUser, m1, m2] = await Promise.all([
+  ;[adminUser, m1, m2, ev1, ev2] = await Promise.all([
     createTestUser('admin'),
     createTestUser('official'),
     createTestUser('official'),
+    createTestUser('evaluator'),
+    createTestUser('evaluator'),
   ])
   await linkMemberRow(adminUser)
   await linkMemberRow(m1)
   await linkMemberRow(m2)
+  await linkMemberRow(ev1)
+  await linkMemberRow(ev2)
   adminC = clientFor(adminUser.accessToken)
   m1C = clientFor(m1.accessToken)
   m2C = clientFor(m2.accessToken)
+  ev1C = clientFor(ev1.accessToken)
+  ev2C = clientFor(ev2.accessToken)
   anonC = clientFor()
 }, 60_000)
 
@@ -118,11 +161,13 @@ afterAll(async () => {
   for (const [bucket, paths] of byBucket) {
     await sb.storage.from(bucket).remove(paths).catch(() => {})
   }
+  if (evaluationIds.length) await sb.from('evaluations').delete().in('id', evaluationIds)
+  const users = [adminUser, m1, m2, ev1, ev2].filter(Boolean)
   await sb
     .from('members')
     .delete()
-    .in('user_id', [adminUser, m1, m2].filter(Boolean).map((u) => u.id))
-  await Promise.all([adminUser, m1, m2].filter(Boolean).map((u) => deleteTestUser(u)))
+    .in('user_id', users.map((u) => u.id))
+  await Promise.all(users.map((u) => deleteTestUser(u)))
 }, 60_000)
 
 beforeEach(() => {
@@ -226,6 +271,74 @@ describe('a member who is not allowed to read the object', () => {
   })
 })
 
+/**
+ * The table and the bucket disagree, and the portal renders a download button
+ * from the table's answer. `evaluations_select_capability_or_subject` (0015)
+ * grants the ROW to the subject, to admin/executive and to anyone holding the
+ * `evaluator` capability. `evaluations_select_owner_or_admin` (0014, written
+ * before capabilities existed) grants the OBJECT to the uploader plus
+ * admin/executive. Two of those readers therefore see a button that cannot
+ * work.
+ *
+ * These tests pin the gap rather than the fix, which is why they assert a
+ * refusal for a member the application says should be allowed. Both are
+ * written up under "Evaluation attachments only open for the member who
+ * uploaded them" in the README; closing either half fails the matching test
+ * here, which is the point of pinning it.
+ */
+describe('an evaluation attachment', () => {
+  let ref: string
+  let path: string
+
+  beforeAll(async () => {
+    path = key('report.txt')
+    // Through the policies, as the portal does it: the evaluator uploads, so
+    // the evaluator owns the object.
+    expect((await uploadAs(ev1C, 'evaluations', path, 'the report')).error).toBeNull()
+    ref = toStorageRef('evaluations', path)
+    await seedEvaluation(m1, ev1, ref, 'report.txt')
+  }, 60_000)
+
+  it('opens for the evaluator who uploaded it', async () => {
+    const url = await resolveFileUrl(ref, { client: ev1C })
+    const res = await fetch(url)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('the report')
+  })
+
+  it('opens for an admin', async () => {
+    const url = await resolveFileUrl(ref, { client: adminC })
+    expect((await fetch(url)).status).toBe(200)
+  })
+
+  it('is listed for a second evaluator, who then cannot open it', async () => {
+    // The capability the application checks before rendering the button.
+    expect(canViewAllEvaluations(toPrincipal({ role: 'member', capabilities: ev2.capabilities })))
+      .toBe(true)
+
+    const { data, error: rowError } = await ev2C.from('evaluations').select('id').eq('file_url', ref)
+    expect(rowError).toBeNull()
+    expect(data).toHaveLength(1)
+
+    await expect(resolveFileUrl(ref, { client: ev2C })).rejects.toThrow(/couldn’t open that file/)
+  })
+
+  it('is listed for the official it is about, who then cannot open it either', async () => {
+    const { data, error: rowError } = await m1C.from('evaluations').select('id').eq('file_url', ref)
+    expect(rowError).toBeNull()
+    expect(data).toHaveLength(1)
+
+    await expect(resolveFileUrl(ref, { client: m1C })).rejects.toThrow(/couldn’t open that file/)
+  })
+
+  it('is not listed at all for a member with neither the capability nor the row', async () => {
+    const { data } = await m2C.from('evaluations').select('id').eq('file_url', ref)
+    expect(data).toHaveLength(0)
+
+    await expect(resolveFileUrl(ref, { client: m2C })).rejects.toThrow(/couldn’t open that file/)
+  })
+})
+
 describe('email-images', () => {
   it('stays an unsigned public link that anyone holding it can fetch', async () => {
     const path = key('banner.txt')
@@ -292,5 +405,37 @@ describe('the memo', () => {
     // come out of the same slot.
     const attachment = await resolveFileUrl(ref, { client: m1C, download: true })
     expect(attachment).not.toBe(first)
+  })
+
+  it('does not serve a five minute link to a caller that asked for a one second one', async () => {
+    const path = key('ttl-key.txt')
+    await seed('portal-resources', path, 'ttl key')
+    const ref = toStorageRef('portal-resources', path)
+
+    const long = await resolveFileUrl(ref, { client: m1C })
+    const short = await resolveFileUrl(ref, { client: m1C, ttlSeconds: 1 })
+
+    const longClaims = tokenClaims(long)
+    const shortClaims = tokenClaims(short)
+    expect(longClaims.exp - longClaims.iat).toBe(SIGNED_URL_TTL_SECONDS)
+    expect(shortClaims.exp - shortClaims.iat).toBe(1)
+  })
+
+  it('goes back to storage when the caller asks it to forget', async () => {
+    const path = key('remint.txt')
+    await seed('portal-resources', path, 'remint')
+    const ref = toStorageRef('portal-resources', path)
+
+    expect(await resolveFileUrl(ref, { client: m1C })).toContain('/object/sign/')
+
+    // Pull the object out from under the memo. A memoised answer still comes
+    // back; `forceRefresh` has to ask storage again, and storage now says no.
+    // That is what a `<video>` does when a range request is refused.
+    await getSupabaseAdmin().storage.from('portal-resources').remove([path])
+
+    expect(await resolveFileUrl(ref, { client: m1C })).toContain('/object/sign/')
+    await expect(resolveFileUrl(ref, { client: m1C, forceRefresh: true })).rejects.toThrow(
+      /couldn’t open that file/
+    )
   })
 })

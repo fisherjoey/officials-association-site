@@ -37,10 +37,15 @@ export {
 /**
  * How long a minted link lives. Five minutes: long enough to click a download
  * button and for the transfer to start, short enough that a link cannot
- * meaningfully outlive the page it was rendered on. Nothing pays for the short
- * life, because links are minted per click (lists) or when a viewer opens
- * (embeds) rather than once per page load — leaving a tab open all afternoon
- * does not strand anything, the next click mints a new link.
+ * meaningfully outlive the page it was rendered on.
+ *
+ * Nothing pays for the short life as long as no one puts a minted link
+ * somewhere it will sit. Every button in the portal mints on the click, so a
+ * list of forty resources costs nothing until somebody wants one. The embeds
+ * are the case that has to be handled rather than assumed: a `<video>` open
+ * for six minutes goes on issuing range requests after the token dies, so the
+ * viewers re-mint on the media element's error rather than trusting the URL
+ * they opened with. `forceRefresh` below exists for that.
  */
 export const SIGNED_URL_TTL_SECONDS = 300
 
@@ -67,6 +72,13 @@ export interface ResolveOptions {
   download?: string | boolean
   /** Override the link lifetime, in seconds. */
   ttlSeconds?: number
+  /**
+   * Ignore any memoised link and mint a new one. What a media element reaches
+   * for when a range request comes back refused: the element cannot tell an
+   * expired token from a dead object, and handing it the same cached string
+   * again would leave it just as broken.
+   */
+  forceRefresh?: boolean
 }
 
 interface CacheEntry {
@@ -77,10 +89,16 @@ interface CacheEntry {
 const signedUrlCache = new Map<string, CacheEntry>()
 const inFlight = new Map<string, Promise<string>>()
 
-function cacheKey(ref: StorageObjectRef, download: string | boolean | undefined): string {
+function cacheKey(
+  ref: StorageObjectRef,
+  download: string | boolean | undefined,
+  ttlSeconds: number
+): string {
   // An attachment link and a preview link are different URLs for the same
-  // object, so they cannot share a cache slot.
-  return `${ref.bucket}/${ref.path}|${download === undefined ? '' : String(download)}`
+  // object, so they cannot share a cache slot. Neither can two lifetimes: a
+  // caller asking for a one-second link and getting a five-minute one back is
+  // not the link it asked for.
+  return `${ref.bucket}/${ref.path}|${download === undefined ? '' : String(download)}|${ttlSeconds}`
 }
 
 /** Drop every memoised link. Tests use this; nothing in the app needs it. */
@@ -117,13 +135,18 @@ export async function resolveFileUrl(
   }
 
   const ttl = options.ttlSeconds ?? SIGNED_URL_TTL_SECONDS
-  const key = cacheKey(ref, options.download)
+  const key = cacheKey(ref, options.download, ttl)
 
-  const cached = signedUrlCache.get(key)
-  if (cached && cached.expiresAtMs > Date.now()) return cached.url
+  if (options.forceRefresh) {
+    signedUrlCache.delete(key)
+    inFlight.delete(key)
+  } else {
+    const cached = signedUrlCache.get(key)
+    if (cached && cached.expiresAtMs > Date.now()) return cached.url
 
-  const pending = inFlight.get(key)
-  if (pending) return pending
+    const pending = inFlight.get(key)
+    if (pending) return pending
+  }
 
   const request = mintSignedUrl(client, ref, ttl, options.download)
     .then((url) => {
