@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/api/client'
 import { membersAPI } from '@/lib/api'
 import { clearSignedUrlCache } from '@/lib/fileDownload'
@@ -66,9 +66,14 @@ const supabase = getSupabaseBrowserClient()
  *
  * ## Cost
  *
- * One roster fetch per sign-in, folded into the lookup `syncUserToMembers` was
- * already doing, so a signed-in session costs the same request it did before.
- * `MemberContext` fetches the fuller row separately for the profile screens.
+ * One roster fetch per auth event that carries a session. At sign-in it is
+ * folded into the lookup `syncUserToMembers` was already doing and costs
+ * nothing extra; on `TOKEN_REFRESHED` and `USER_UPDATED` it is a new request
+ * that the old metadata-reading version did not make, so each open tab adds one
+ * `members` lookup per token refresh — roughly hourly per tab. `MemberContext`
+ * fetches the fuller row separately for the profile screens, so a refresh costs
+ * two lookups, not one. That is the price of a rung that can be taken away
+ * within the hour instead of lasting as long as the tab does.
  */
 async function resolvePrincipal(supabaseUser: SupabaseUser | null): Promise<Principal> {
   if (!supabaseUser) return ANONYMOUS
@@ -125,6 +130,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [supabaseUser, setSupabaseUser] = useState<SupabaseUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [devRoleIndex, setDevRoleIndex] = useState(0)
+
+  /**
+   * Which session the pending roster lookup belongs to. Bumped whenever the
+   * answer in flight stops being the one we want — a sign-out, or a newer
+   * `adoptSession` — so the late commit can tell that it has been overtaken.
+   */
+  const sessionGeneration = useRef(0)
+
+  /**
+   * The last principal the roster actually answered with, and whose it is.
+   * Placeholder commits are not recorded here; only a landed lookup is.
+   *
+   * It has to be a ref rather than state because `adoptSession` reads it before
+   * deciding what to render, and the auth listener subscribes once, so it sees
+   * `user` from the first render's closure forever. Both refs are refs for that
+   * reason and not for performance.
+   */
+  const resolved = useRef<{ userId: string; principal: Principal } | null>(null)
 
   // Check if authentication should be disabled in development
   const isDevMode = process.env.NODE_ENV === 'development'
@@ -188,22 +211,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     app_metadata: sbUser.app_metadata
   })
 
+  /** Drop the session entirely, and retire anything still resolving for it. */
+  const clearUser = () => {
+    resolved.current = null
+    sessionGeneration.current++
+    setSupabaseUser(null)
+    setUser(null)
+    setIsLoading(false)
+  }
+
   /**
-   * Take up a session: show it as signed in with no rung, then fill the rung in
-   * from the roster.
+   * Take up a session: show whatever the roster last said about this account,
+   * then re-read the roster and correct it.
    *
-   * The order matters. Rendering nothing until the roster answers would blank
-   * the portal on every page load; rendering an optimistic rung would flash
-   * controls that the API then refuses. Signed-in-with-nothing is the only
-   * intermediate state that is never wrong in the permissive direction.
+   * ## Never a roleless render of a known account
+   *
+   * The first commit carries the already-resolved principal forward when the
+   * session belongs to the account already on screen. That is not an optimistic
+   * guess — it is the last answer the roster gave, so it is never more
+   * permissive than the roster, and the fetch below replaces it either way.
+   *
+   * Committing `ANONYMOUS` here unconditionally is what the first version did,
+   * and it is wrong on the re-resolution paths. `TOKEN_REFRESHED` fires on every
+   * open tab roughly hourly and `USER_UPDATED` fires on things as ordinary as a
+   * password change, and both route through here. A render carrying `role: null`
+   * is a render in which `app/portal/admin/page.tsx`, and the mail composer that
+   * guards itself the same way, see `hasRole('executive')` come back false and
+   * call `router.push('/portal')` — so an admin working in the admin dashboard
+   * was thrown out of it about once an hour.
+   *
+   * Downgrades still land, one refresh late rather than instantly. That is the
+   * right side to be late on: the API is the boundary, so a stale tile is a
+   * button that 403s, while a roleless flash is a portal that navigates away
+   * from the page the user is on.
+   *
+   * ## And no roleless render of an unknown one either
+   *
+   * When there is nothing to carry forward — a fresh sign-in — the session is
+   * held `isLoading` until the roster answers. `AuthGuard` spins on that flag
+   * and `app/(auth)/login/page.tsx` waits for it before navigating, so a deep
+   * link to `/portal/admin` lands on a mounted page whose rung is known. Without
+   * it the login page redirected on the roleless commit and the admin page
+   * bounced the user straight back to `/portal`. `isLoading` used to span
+   * `initializeAuth` and nothing else, which is why it covered none of this.
+   *
+   * ## Ordering
+   *
+   * `generation` keeps a correction from outliving the session it belongs to.
+   * Signing out bumps it, and so does the next `adoptSession`, so a roster fetch
+   * that lands late drops its answer instead of resurrecting a signed-out user
+   * or overwriting a newer one. Whichever call is still current clears the
+   * loading flag, and `clearUser` clears it on the way out, so an overtaken call
+   * cannot strand the portal on a spinner.
    */
   const adoptSession = async (sbUser: SupabaseUser, { register }: { register: boolean }) => {
+    const generation = ++sessionGeneration.current
+    // Only a landed roster answer counts as something to carry. The placeholder
+    // commit below never records itself, so two adoptions racing on a fresh
+    // session cannot mistake each other's placeholder for a resolved rung.
+    const carried =
+      resolved.current?.userId === sbUser.id ? resolved.current.principal : null
+
     setSupabaseUser(sbUser)
-    setUser(mapSupabaseUser(sbUser, ANONYMOUS))
+    setUser(mapSupabaseUser(sbUser, carried ?? ANONYMOUS))
+    if (!carried) setIsLoading(true)
+
     const principal = register
       ? await syncUserToMembers(sbUser)
       : await resolvePrincipal(sbUser)
+
+    if (sessionGeneration.current !== generation) return
+    resolved.current = { userId: sbUser.id, principal }
     setUser(mapSupabaseUser(sbUser, principal))
+    setIsLoading(false)
   }
 
   useEffect(() => {
@@ -228,14 +308,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (session?.user) {
           // Set user context for logging
           clientLogger.setUser(session.user.id, session.user.email!)
-          // Awaited, so `isLoading` covers the roster lookup too and no
-          // consumer sees a signed-in user whose rung has not arrived.
+          // `adoptSession` owns the loading flag from here. It holds it until
+          // the roster answers and clears it then, or leaves it to whichever
+          // later event overtook it. Clearing it here as well would drop the
+          // spinner a round-trip early and hand the portal a roleless user.
           await adoptSession(session.user, { register: true })
+          return
         }
+
+        setIsLoading(false)
       } catch (error) {
         console.error('Error initializing auth:', error)
         clientLogger.error('auth', 'init_error', 'Error initializing auth', error instanceof Error ? error : undefined)
-      } finally {
         setIsLoading(false)
       }
     }
@@ -271,13 +355,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clientLogger.info('auth', 'signed_out', 'User signed out')
         clientLogger.clearUser()
         // `logout()` below does not reload the page, so nothing else in the tab
-        // is torn down — the module-level memo in lib/fileDownload.ts included.
+        // is torn down, the module-level memo in lib/fileDownload.ts included.
         // That memo is keyed to the acting session and so cannot hand the next
         // member a link minted for this one, but the links are of no further use
         // to anybody and sign-out is when to say so.
         clearSignedUrlCache()
-        setSupabaseUser(null)
-        setUser(null)
+        // `clearUser` also retires any roster lookup still in flight. Without
+        // that, signing out while one is pending let its trailing commit put a
+        // signed-in user back on screen with no session behind it, and every
+        // request from there 401s until the next auth event.
+        clearUser()
       } else if (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
         if (!session?.user) return
         // Re-read the roster rather than trusting the refreshed token. A rung
@@ -299,9 +386,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         'Supabase is not configured; treating the session as signed out',
         { reason: error instanceof Error ? error.message : String(error) }
       )
-      setSupabaseUser(null)
-      setUser(null)
-      setIsLoading(false)
+      clearUser()
     }
 
     // Cleanup subscription

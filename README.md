@@ -385,9 +385,17 @@ an ordinary authenticated call that any signed-in user can make about themselves
 A signed-in account with no roster row has no rung and no grants. That state is a normal part
 of the flow rather than a fault. It is what someone accepting an invitation or signing up on
 their own looks like before they register, and `MemberGuard` renders the registration form for
-exactly that case. It resolves to nobody rather than to the bottom rung, so a stranger holding
-an account reaches the portal shell and nothing behind it. The SQL side answers the same way:
-`structural_role()` returns NULL for a caller with no row.
+exactly that case. It resolves to nobody rather than to the bottom rung, so nothing that asks
+for a rung or a grant will answer it. The SQL side says the same: `structural_role()` returns
+NULL for a caller with no row.
+
+Having no rung is not the same as having no access. Announcements, resources, the calendar,
+newsletters, scheduler updates, member activities, rule modifications and the stats endpoints
+all gate their GET at `'authenticated'`, and `isAuthorized` reads that as "any signed-in
+caller", rung or not. A signed-in account with no roster row reads all of it. What stays shut is
+whatever asks for a rung or a grant: the roster, the logs, contact submissions, email history,
+service requests, and anyone else's evaluations. That line, and not the roster row, is what the
+self-service signup decision turns on. See [Auth configuration](#auth-configuration).
 
 The cost is one indexed two-column lookup per authenticated request. `createHandler` resolves
 it once, before the auth gate, and hands the answer to the handler. Nothing is cached between
@@ -430,10 +438,23 @@ Add `<your origin>/auth/callback` to **Redirect URLs**. `getAuthCallbackUrl()` i
 `lib/siteConfig.ts` builds that path and takes no arguments on purpose. Threading user input
 into it turns the login flow into an open redirect through Supabase's allow-listed domain.
 
-Self-service signup is your call. Leaving it on lets anyone create an account and get past the
-login page, but it does not let them reach anything inside: a new account has no roster row, so
-it has no rung and no grants, and every function refuses it until an admin adds them to the
-roster. Turn it off if your association only ever admits people by invitation.
+Turn self-service signup off unless you have a reason to want it on. A stranger who signs up no
+longer becomes an administrator, but they do get a working account, and a working account reads
+most of the portal: announcements, resources, the calendar, newsletters, scheduler updates,
+member activities, rule modifications and the stats all answer any signed-in caller. Only the
+roster, the logs, contact submissions and other people's evaluations ask for a rung.
+
+They do not stay off the roster, either. `AuthProvider` mounts on the login page as well as the
+portal, and `syncUserToMembers` in `contexts/AuthContext.tsx` POSTs a `members` row on the
+`SIGNED_IN` event, so a self-signup is on the roster at the bottom rung from their first sign-in,
+with no admin involved. That is deliberate, and it is how an invited person registers
+themselves, but it means "no admin has touched this account" and "this account has no rung" stop
+describing the same thing after one sign-in. Nobody climbs higher that way: the `members`
+function refuses a non-admin caller any role but the default and refuses capabilities outright,
+and the guard trigger in migration 0015 says the same at the database.
+
+Leave signup on only if you are content for anyone who finds the site to read your members-only
+content.
 
 Roles are not stored on the auth user. See [Where a role comes from](#where-a-role-comes-from).
 
