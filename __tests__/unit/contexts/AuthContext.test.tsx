@@ -18,6 +18,7 @@ import React from 'react'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { clientLogger } from '@/lib/clientLogger'
+import { clearSignedUrlCache } from '@/lib/fileDownload'
 
 // The provider captures its client once, at module scope. Hand it a proxy that
 // forwards to whatever the current test installed, so a single module instance
@@ -45,6 +46,10 @@ jest.mock('@/lib/api', () => ({
     getByUserId: jest.fn().mockResolvedValue({ id: 'member-1' }),
     create: jest.fn().mockResolvedValue({ id: 'member-1' }),
   },
+}))
+
+jest.mock('@/lib/fileDownload', () => ({
+  clearSignedUrlCache: jest.fn(),
 }))
 
 /** The genuine "Supabase is not configured" stub, straight from lib/api/client. */
@@ -208,5 +213,38 @@ describe('AuthProvider with Supabase configured', () => {
 
     unmount()
     expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops the signed-url memo when the session ends', async () => {
+    // `logout()` signs out without a reload, so nothing in the tab is torn
+    // down — the module-level cache in lib/fileDownload.ts included. Keying it
+    // to the acting session is what stops the next member reading a link
+    // minted for this one; emptying it here is so the links stop existing at
+    // the moment they stop being wanted.
+    renderProvider()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session')).toHaveTextContent('anonymous')
+    })
+    expect(clearSignedUrlCache).not.toHaveBeenCalled()
+
+    await act(async () => {
+      handler('SIGNED_IN', {
+        user: {
+          id: 'user-1',
+          email: 'member@example.com',
+          user_metadata: { full_name: 'Member User' },
+          app_metadata: { role: 'member' },
+        },
+      })
+    })
+    expect(clearSignedUrlCache).not.toHaveBeenCalled()
+
+    await act(async () => {
+      handler('SIGNED_OUT', null)
+    })
+
+    expect(clearSignedUrlCache).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('session')).toHaveTextContent('anonymous')
   })
 })

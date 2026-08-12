@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { resourcesAPI } from '@/lib/api'
 import { uploadFile } from '@/lib/fileUpload'
 import ResourceViewer from '@/components/ResourceViewer'
+import FileDownloadLink from '@/components/FileDownloadLink'
 import ResourceThumbnail from '@/components/ResourceThumbnail'
 import { useRole } from '@/contexts/RoleContext'
 import { useToast } from '@/hooks/useToast'
@@ -325,7 +326,7 @@ export default function ResourcesClient() {
       if (resourceType === 'file' && uploadedFile) {
         try {
           const uploadResult = await uploadFile(uploadedFile)
-          fileUrl = uploadResult.url
+          fileUrl = uploadResult.fileRef
           fileName = uploadResult.fileName
           success('File Uploaded', `${uploadResult.fileName} uploaded successfully`)
         } catch (uploadError) {
@@ -779,9 +780,14 @@ export default function ResourcesClient() {
           {/* Primary action only — download or open */}
           <div className="flex items-center gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
             {resource.fileUrl && (
-              <a href={resource.fileUrl} download className="p-2 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded" title="Download">
+              <FileDownloadLink
+                fileRef={resource.fileUrl}
+                className="p-2 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
+                title="Download"
+                onError={(message) => error('Download Failed', message)}
+              >
                 <IconDownload className="h-4 w-4" />
-              </a>
+              </FileDownloadLink>
             )}
             {resource.externalLink && (
               <a href={resource.externalLink} target="_blank" rel="noopener noreferrer" className="p-2 text-blue-400 hover:bg-blue-900/30 rounded" title="Open">

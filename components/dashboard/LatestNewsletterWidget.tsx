@@ -5,6 +5,8 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { IconNotebook, IconChevronRight, IconEye, IconDownload } from '@tabler/icons-react'
 import { newslettersAPI } from '@/lib/api'
+import { useToast } from '@/hooks/useToast'
+import FileDownloadLink from '@/components/FileDownloadLink'
 import { NEWSLETTER_NAME, MODULES } from '@/lib/siteConfig'
 
 // Dynamically import PDFViewer to avoid SSR issues
@@ -25,6 +27,7 @@ export default function LatestNewsletterWidget() {
   const [newsletter, setNewsletter] = useState<Newsletter | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [showViewer, setShowViewer] = useState(false)
+  const { error: showError } = useToast()
 
   useEffect(() => {
     loadLatestNewsletter()
@@ -114,14 +117,15 @@ export default function LatestNewsletterWidget() {
             <IconEye className="h-4 w-4" />
           </button>
           {newsletter.file_url && (
-            <a
-              href={newsletter.file_url}
-              download
+            <FileDownloadLink
+              fileRef={newsletter.file_url}
+              fileName={`${newsletter.title}.pdf`}
               className="p-2 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
               title="Download"
+              onError={(message) => showError('Download Failed', message)}
             >
               <IconDownload className="h-4 w-4" />
-            </a>
+            </FileDownloadLink>
           )}
         </div>
       </div>

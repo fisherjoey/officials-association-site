@@ -14,10 +14,12 @@ import {
   IconBrandYoutube,
   IconBrandVimeo
 } from '@tabler/icons-react'
+import { useFileUrl } from '@/hooks/useFileUrl'
 
 interface ResourceThumbnailProps {
   resource: {
     title: string
+    /** Stored reference, not a URL — see `lib/storageRefs.ts`. */
     fileUrl?: string
     externalLink?: string
   }
@@ -26,6 +28,10 @@ interface ResourceThumbnailProps {
 }
 
 export default function ResourceThumbnail({ resource, size = 'medium', onClick }: ResourceThumbnailProps) {
+  // Only an image thumbnail needs a fetchable URL; everything else here is
+  // drawn from the file extension, which the stored reference still carries.
+  const { url: imageUrl } = useFileUrl(resource.fileUrl)
+
   const getFileType = (url: string) => {
     const extension = url.split('.').pop()?.toLowerCase()
     
@@ -63,13 +69,16 @@ export default function ResourceThumbnail({ resource, size = 'medium', onClick }
   const externalType = resource.externalLink && !resource.fileUrl ? getExternalType(resource.externalLink) : null
   
   // For images, show actual thumbnail
-  if (fileType === 'image' && resource.fileUrl) {
+  // While the link is being signed there is nothing to put in `src` — an
+  // empty one fires onError and the fallback icon is permanent — so the icon
+  // branch below carries it until the URL arrives.
+  if (fileType === 'image' && imageUrl) {
     return (
       <div
         className={`${sizeClasses[size]} rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800 flex items-center justify-center ${onClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
         onClick={onClick}>
         <img
-          src={resource.fileUrl}
+          src={imageUrl}
           alt={resource.title}
           className="w-full h-full object-cover"
           onError={(e) => {

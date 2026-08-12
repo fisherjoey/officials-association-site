@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/api/client'
 import { membersAPI } from '@/lib/api'
+import { clearSignedUrlCache } from '@/lib/fileDownload'
 import { clientLogger } from '@/lib/clientLogger'
 import type { User as SupabaseUser, Session } from '@supabase/supabase-js'
 import {
@@ -248,6 +249,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else if (event === 'SIGNED_OUT') {
         clientLogger.info('auth', 'signed_out', 'User signed out')
         clientLogger.clearUser()
+        // `logout()` below does not reload the page, so nothing else in the tab
+        // is torn down — the module-level memo in lib/fileDownload.ts included.
+        // That memo is keyed to the acting session and so cannot hand the next
+        // member a link minted for this one, but the links are of no further use
+        // to anybody and sign-out is when to say so.
+        clearSignedUrlCache()
         setSupabaseUser(null)
         setUser(null)
       } else if (event === 'TOKEN_REFRESHED' && session?.user) {

@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/useToast'
 import { parseAPIError, sanitize } from '@/lib/errorHandling'
 import { canViewAllEvaluations } from '@/lib/roles'
 import FileUpload from '@/components/FileUpload'
+import FileDownloadLink from '@/components/FileDownloadLink'
 import Modal from '@/components/ui/Modal'
 import {
   IconPlus,
@@ -199,7 +200,7 @@ export default function EvaluationsPage() {
         member_id: selectedMemberId,
         evaluator_id: member?.id,
         evaluation_date: evaluationDate,
-        file_url: uploadResult.url,
+        file_url: uploadResult.fileRef,
         file_name: uploadResult.fileName,
         title: title ? sanitize.text(title) : undefined,
         notes: notes ? sanitize.text(notes) : undefined,
@@ -405,12 +406,25 @@ export default function EvaluationsPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-0.5 flex-shrink-0">
-                    <a href={evaluation.file_url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-blue-400 hover:bg-blue-900/30 rounded" title="View">
+                    <FileDownloadLink
+                      fileRef={evaluation.file_url}
+                      fileName={evaluation.file_name}
+                      mode="view"
+                      className="p-1.5 text-blue-400 hover:bg-blue-900/30 rounded"
+                      title="View"
+                      onError={(message) => error('Download Failed', message)}
+                    >
                       <IconExternalLink className="h-4 w-4" />
-                    </a>
-                    <a href={evaluation.file_url} download className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded" title="Download">
+                    </FileDownloadLink>
+                    <FileDownloadLink
+                      fileRef={evaluation.file_url}
+                      fileName={evaluation.file_name}
+                      className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
+                      title="Download"
+                      onError={(message) => error('Download Failed', message)}
+                    >
                       <IconDownload className="h-4 w-4" />
-                    </a>
+                    </FileDownloadLink>
                   </div>
                 </div>
               ))}
@@ -476,12 +490,25 @@ export default function EvaluationsPage() {
                               )}
                             </div>
                             <div className="flex items-center gap-0.5 flex-shrink-0">
-                              <a href={evaluation.file_url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-blue-400 hover:bg-blue-900/30 rounded" title="View">
+                              <FileDownloadLink
+                                fileRef={evaluation.file_url}
+                                fileName={evaluation.file_name}
+                                mode="view"
+                                className="p-1.5 text-blue-400 hover:bg-blue-900/30 rounded"
+                                title="View"
+                                onError={(message) => error('Download Failed', message)}
+                              >
                                 <IconExternalLink className="h-4 w-4" />
-                              </a>
-                              <a href={evaluation.file_url} download className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded" title="Download">
+                              </FileDownloadLink>
+                              <FileDownloadLink
+                                fileRef={evaluation.file_url}
+                                fileName={evaluation.file_name}
+                                className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
+                                title="Download"
+                                onError={(message) => error('Download Failed', message)}
+                              >
                                 <IconDownload className="h-4 w-4" />
-                              </a>
+                              </FileDownloadLink>
                               {canDelete && (
                                 <button onClick={() => handleDelete(evaluation)} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded" title="Delete">
                                   <IconTrash className="h-3.5 w-3.5" />
@@ -517,12 +544,25 @@ export default function EvaluationsPage() {
                 )}
               </div>
               <div className="flex items-center gap-0.5 flex-shrink-0">
-                <a href={evaluation.file_url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-blue-400 hover:bg-blue-900/30 rounded" title="View">
+                <FileDownloadLink
+                  fileRef={evaluation.file_url}
+                  fileName={evaluation.file_name}
+                  mode="view"
+                  className="p-1.5 text-blue-400 hover:bg-blue-900/30 rounded"
+                  title="View"
+                  onError={(message) => error('Download Failed', message)}
+                >
                   <IconExternalLink className="h-4 w-4" />
-                </a>
-                <a href={evaluation.file_url} download className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded" title="Download">
+                </FileDownloadLink>
+                <FileDownloadLink
+                  fileRef={evaluation.file_url}
+                  fileName={evaluation.file_name}
+                  className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
+                  title="Download"
+                  onError={(message) => error('Download Failed', message)}
+                >
                   <IconDownload className="h-4 w-4" />
-                </a>
+                </FileDownloadLink>
               </div>
             </div>
           ))}

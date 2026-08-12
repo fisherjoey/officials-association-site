@@ -162,9 +162,10 @@ run a local database or to regenerate the screenshots.
 
 ### Migrations
 
-`supabase/migrations/` holds fourteen files that build the whole schema: members, roles and
+`supabase/migrations/` holds sixteen files that build the whole schema: members, roles and
 their RLS policies, portal content, evaluations, public content, invite tokens, email
-history, logging, submissions, season stats, and the storage buckets with their policies.
+history, logging, submissions, season stats, the storage buckets with their policies, and the
+rule that keeps an evaluation's row and its file saying the same thing.
 
 ```bash
 npx supabase link --project-ref <your-project-ref>
@@ -201,7 +202,7 @@ not need to create anything in the dashboard.
 | `portal-resources` | no | any signed-in member | any signed-in member, but only the uploader or an admin or executive can change or remove an item |
 | `newsletters` | no | any signed-in member | admin, executive |
 | `training-materials` | no | any signed-in member | admin, executive |
-| `evaluations` | no | whoever uploaded the file, plus admins and executives | any signed-in member |
+| `evaluations` | no | whoever can read the evaluation row that points at the file (the official it is about, admins, executives, and anyone holding the evaluator capability), plus whoever uploaded it | any signed-in member |
 
 `email-images` is public because those images are embedded in outgoing mail and the person
 reading that mail in Gmail has no Supabase session. Public means anyone holding an object URL
@@ -214,6 +215,16 @@ policies use, so storage and rows cannot drift apart when the role model changes
 reasoning behind each bucket is written out at the top of
 `supabase/migrations/20260810001400_storage_policies.sql`. Read that before you change one.
 
+The `evaluations` bucket needs a second question answered. A member may read the file when
+they may read the evaluation row that points at it, and that is a rule about the row rather
+than about the object. Object keys say nothing about who a report is about, but the reference
+runs the other way: `evaluations.file_url` holds `storage://evaluations/<key>`, so a policy on
+`storage.objects` can start from `name` and find the row. Both policies then sit on one
+predicate, `public.can_read_evaluation()` in
+`supabase/migrations/20260810001600_evaluation_object_access.sql`. Change who may read a report
+and the file follows, with nobody having to remember the bucket. An object with no row behind
+it stays owner-only, which is the state of every upload in the moment before its row exists.
+
 The migration is also what decides whether a bucket is public. Flip `portal-resources` to
 public in the dashboard and the next `db push` flips it back. Change the migration instead.
 
@@ -222,7 +233,62 @@ role check inside that function is still the only thing guarding the service-rol
 policies protect the browser upload path in `lib/fileUpload.ts`, and they are what is left
 underneath if someone makes a bucket public.
 
-One thing they do not yet do is serve downloads. See [Known gaps](#known-gaps).
+How those files are served is the next section.
+
+### Downloads
+
+A private bucket has no URL that works without a session, so nothing in the portal stores
+one. `resources.file_url`, `newsletters.file_url` and `evaluations.file_url` hold a reference
+to the object instead:
+
+```
+storage://portal-resources/1730000000000-rulebook.pdf
+```
+
+`lib/fileUpload.ts` writes that reference after an upload. `lib/fileDownload.ts` turns it back
+into a link when something needs one: `resolveFileUrl()` calls `createSignedUrl()` with the
+reader's own JWT, so the SELECT policy that governs a download also decides whether a link
+can be minted at all. A member who cannot read the object cannot get a URL for it either,
+which is the point. There is no second access model here to keep in step with the policies.
+
+Links last five minutes. Every button that points at an uploaded file goes through
+`<FileDownloadLink>`, which mints inside the click, so a download or an open-in-a-tab hands
+the browser a URL that is seconds old however long the page has been sitting there, and a list
+of forty resources costs no storage requests until somebody wants one of them. A download link
+also asks storage for `Content-Disposition: attachment`, since the `download` attribute on an
+`<a>` is ignored cross-origin and is not enough on its own. When a mint is refused, the button
+says so instead of doing nothing. The one plain anchor left is in the public content editor
+under `/portal/admin/public-content/resources`, where `file_url` is a URL an admin types into a
+form rather than anything this application uploaded.
+
+Within those five minutes `resolveFileUrl()` remembers what it minted and gives the same
+string back to anything that asks again, so a viewer re-rendering three times costs one round
+trip rather than three. It stops reusing a link thirty seconds before the token dies, so a
+download never starts against a URL that expires mid-transfer.
+
+That memo is keyed to whoever minted the link, and it has to be. A signed URL is a bearer
+token, `logout()` signs out without reloading the page, and the module holding the memo lives
+on into the next session. On a shared machine, a cache keyed on the file alone would hand the
+second member a working link minted for the first. The key carries the acting session instead,
+and signing out empties the memo as well.
+
+Embeds are the case that has to be handled rather than asserted. A viewer signs once when it
+opens. That is fine for an `<img>` or a PDF, which have finished fetching long before the
+token dies, and not fine for `<video>` or `<audio>`, which go on issuing range requests as
+playback and seeking continue and would otherwise stop mid-clip at the five minute mark. Those
+elements re-mint on their own error and put the member back where they were. Nothing else in
+the portal holds a minted URL in an attribute waiting to be clicked.
+
+`email-images` is the exception and stays on `getPublicUrl()`. Those images are embedded in
+outgoing mail, the recipient opens that mail in Gmail with no Supabase session, and a signed
+link there would expire into a broken image in every message the association has ever sent.
+
+A row holding an older `/storage/v1/object/public/<bucket>/...` or `/object/sign/...` string
+still resolves: the bucket and path are read back out of it and signed like any other
+reference, so an adopter with data already in place has nothing to migrate. Public URLs for
+`email-images` pass through untouched, and so does anything that is not a storage location at
+all, since `resources.file_url` also holds pasted external links for link and video
+resources.
 
 ### Row-level security
 
@@ -236,7 +302,8 @@ every roster write goes through a function holding the service-role key. A trigg
 second barrier, stopping an unprivileged session from setting or changing its own `role`,
 `capabilities` or `user_id` on the day someone re-grants UPDATE.
 
-`evaluations`. You can read the evaluations written about you. Admins, executives and anyone
+`evaluations`. You can read the evaluations written about you, attachment included. Admins,
+executives and anyone
 holding the `evaluator` capability can read all of them. Admins, executives and evaluators can
 write one; only admins and executives can edit or delete. `netlify/functions/evaluations.ts`
 applies the same rule before a request reaches the database, and adds one thing a policy
@@ -673,20 +740,14 @@ reading `user_metadata` for `role` and `roles`, in `getPrincipal()` in
 same fallback. Both fields feed the rung and the capability grants, so dropping the fallback
 closes both. Tracked as PLAT-33.
 
-### Downloads from the private buckets need signed URLs
+### `access_level` on a resource gates the row, not the file
 
-The buckets and their policies ship in the migration chain, described under [Storage
-buckets](#storage-buckets). The portal's download links do not go through them.
-`lib/fileUpload.ts` builds a `getPublicUrl()` link after each upload and the row it writes
-stores that string, so the resources list, the newsletter list and the evaluation attachments
-all point at `/storage/v1/object/public/...`. That route only resolves for a public bucket,
-which means `email-images` and nothing else. Every other download link in the portal comes
-back 400.
-
-The fix is `createSignedUrl()` at render time instead of `getPublicUrl()` at upload time.
-Signed links expire, so storing one in `resources.file_url` moves the problem rather than
-solving it. The policies already decide who may read a given object, so what is missing is the
-code that asks for the link.
+`resources.access_level` restricts who sees a resource in the list. It does not restrict the
+object. Keys in `portal-resources` are a bare `<timestamp>-<name>` with nothing tying them to
+a resource id, so the storage policy cannot honour the column, and any signed-in member
+holding an object key can mint a link for it. Anything that has to be narrower than
+members-only wants a Netlify function that reads the row, checks the level, and signs the URL
+itself.
 
 ### `npm audit` still has four production findings
 

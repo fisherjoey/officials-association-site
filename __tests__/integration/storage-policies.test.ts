@@ -16,7 +16,13 @@
  *   newsletters         private. Any member reads, admin/executive writes.
  *   training-materials  private. Any member reads, admin/executive writes.
  *   evaluations         private. Uploader or admin/executive reads; any
- *                       member may upload.
+ *                       member may upload. 0016 adds a third way in — whoever
+ *                       can read the `evaluations` row that points at the
+ *                       object — which needs a row to exist and so does not
+ *                       show up here. Every object in this file is a bare
+ *                       upload with no row behind it, which makes these the
+ *                       tests for the floor 0016 leaves untouched. The widened
+ *                       case is in signed-downloads.test.ts.
  *
  * These run against the browser path — a client holding the anon key and a
  * user JWT — because that is the only path these policies govern.
@@ -119,8 +125,13 @@ beforeAll(async () => {
     createTestUser('official'),
   ])
   await linkMemberRow(adminUser, 'admin')
-  await linkMemberRow(m1, 'official')
-  await linkMemberRow(m2, 'official')
+  // `member`, not `official`: 0015 closed members.role to the three structural
+  // rungs and `official` is its retired spelling, so the insert is rejected by
+  // members_role_structural_check. `createTestUser('official')` above still
+  // reads fine — the helper resolves that name through toPrincipal() — but the
+  // column takes the rung it resolves to.
+  await linkMemberRow(m1, 'member')
+  await linkMemberRow(m2, 'member')
   adminC = clientFor(adminUser.accessToken)
   m1C = clientFor(m1.accessToken)
   m2C = clientFor(m2.accessToken)

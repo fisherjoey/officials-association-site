@@ -1,5 +1,6 @@
 import { validators, AppError } from './errorHandling'
 import { getSupabaseBrowserClient } from './api/client'
+import { isPublicBucket, toStorageRef } from './storageRefs'
 
 const MAX_FILE_SIZE_MB = 25
 const ALLOWED_FILE_TYPES = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'mp4', 'avi', 'mov', 'jpg', 'jpeg', 'png']
@@ -25,7 +26,23 @@ function getContentType(filename: string): string {
   return types[ext || ''] || 'application/octet-stream'
 }
 
-export async function uploadFile(file: File, path?: string): Promise<{ url: string; fileName: string; size: number }> {
+export interface UploadedFile {
+  /**
+   * What the row should store. For a private bucket that is a
+   * `storage://<bucket>/<path>` reference, not a URL — see `lib/fileDownload.ts`
+   * for why, and use `resolveFileUrl()` or `<FileDownloadLink>` to turn it back
+   * into something fetchable. For the public bucket it is the public URL,
+   * because that link has to keep working for people with no session.
+   */
+  fileRef: string
+  bucket: string
+  /** Object key inside the bucket. */
+  path: string
+  fileName: string
+  size: number
+}
+
+export async function uploadFile(file: File, path?: string): Promise<UploadedFile> {
   // Frontend validation before upload
   const fileSizeError = validators.fileSize(file, MAX_FILE_SIZE_MB)
   if (fileSizeError) {
@@ -76,13 +93,17 @@ export async function uploadFile(file: File, path?: string): Promise<{ url: stri
       throw new AppError(`Upload failed: ${error.message}`, 'UPLOAD_ERROR')
     }
 
-    // Get public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from(bucket)
-      .getPublicUrl(data.path)
+    // Persist where the object lives, not a link to it. `/object/public/…`
+    // only resolves for a public bucket, and a signed link would be stale
+    // long before anyone clicked it; both are minted on read instead.
+    const fileRef = isPublicBucket(bucket)
+      ? supabase.storage.from(bucket).getPublicUrl(data.path).data.publicUrl
+      : toStorageRef(bucket, data.path)
 
     return {
-      url: publicUrl,
+      fileRef,
+      bucket,
+      path: data.path,
       fileName,
       size: file.size
     }
