@@ -289,9 +289,10 @@ Other scripts:
 |---|---|
 | `npm test` | Unit tests. 356 across 23 suites, no external services. |
 | `npm run test:integration` | Integration tests against a real Supabase project. Needs `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Creates and cleans up tagged rows and a couple of throwaway auth users. |
-| `npm run build` | The production static export, into `out/`. |
-| `npx tsc --noEmit` | Type check. Use this one; `npm run lint` checks nothing, for the reason in [Known gaps](#known-gaps). |
 | `node scripts/check-exported-links.mjs` | Run after a build. Reads every local `href` out of `out/` and fails on any that resolves to nothing. |
+| `npm run build` | The production static export, into `out/`. |
+| `npx tsc --noEmit` | Type check. |
+| `npm run lint` | ESLint, via `eslint.config.mjs` (`next/core-web-vitals`). Also runs as part of `npm run build`, since `next.config.js` sets `eslint.ignoreDuringBuilds: false`. |
 
 ---
 
@@ -569,14 +570,40 @@ That is the whole protection. Make a bucket public and there is no row-level lay
 underneath it: every object in that bucket becomes world-readable by URL. Write your own
 policies before you do. Tracked as PLAT-36.
 
-### `npm run lint` does not lint
+### `npm audit` still has ten production findings
 
-The script runs `next lint`, but there is no ESLint configuration anywhere in the
-repository, so it exits successfully having checked nothing. `next.config.ts` sets
-`eslint.ignoreDuringBuilds: false` with a comment about lint errors failing the build, and
-with no config to load that is inert too.
+`npm audit --omit=dev` used to report 42 vulnerabilities in production dependencies, 40 of
+them high. Most of that came from two packages nothing in the app actually imports:
+`decap-cms-app` (the CMS admin bundle, dead code since Decap CMS was pulled from this fork)
+and `pdfjs-dist` / `react-pdf` (`PDFViewer.tsx` renders PDFs with a plain
+`<object>`/`<iframe>`, not a PDF.js canvas; react-pdf was never wired up, and a 1.1MB
+`public/pdf.worker.min.js` was shipping in every build without a single request for it).
+Dropping both, then running `npm audit fix` for what it could resolve without a major bump,
+took the count from 42 down to 10: 2 low, 8 high.
 
-Use `npx tsc --noEmit` instead. A green build is not lint evidence. Tracked as PLAT-42.
+What's left, and why it's staying for now:
+
+- **`next` → `postcss` / `sharp` (high).** The fix is Next 16, and this lane doesn't touch
+  Next's major version. Both are build-time tools here: `output: 'export'` plus
+  `images: { unoptimized: true }` means Next's sharp-based image server never runs in this
+  app, and postcss only ever processes this repo's own Tailwind source, never
+  user-supplied CSS. Not reachable from a request.
+- **`@netlify/functions` → `@netlify/blobs`, `@netlify/dev-utils`, `image-size`, and,
+  separately, `esbuild` / `@netlify/zip-it-and-ship-it` (high and low).** The fix is
+  `@netlify/functions@5`, a major bump touching every one of the 12 function handlers that
+  import `Handler` / `HandlerEvent` from it. That's enough surface to need its own lane,
+  tested against a real deploy, rather than a drive-by fix here. Checked what actually runs,
+  though: the package's deployed entry point (`dist/main.cjs`) only requires Node's own
+  `process`, `stream` and `util`. Blobs, dev-utils and the esbuild-based bundler sit behind
+  the package's `/dev` (local CLI) subpath, which nothing in this repo imports. None of it is
+  reachable from a running function, only from local tooling.
+- **`xlsx` (high, no fix available).** SheetJS stopped publishing patched versions to npm;
+  the fix exists only on their own CDN, outside what `npm audit` can resolve.
+  `lib/stats/readWorkbook.ts` is the only importer, runs entirely in the browser, and only
+  ever parses a file the uploading portal member hands it themselves through
+  `StatsUploadModal.tsx`. Worst case is a member attacking their own browser tab, not a
+  public attack surface, but it's unresolved, and stays that way until SheetJS (or a
+  maintained fork) publishes a real fix to npm.
 
 ### Stats ingestion assumes Arbiter xlsx exports
 
