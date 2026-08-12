@@ -9,6 +9,7 @@ import { useToast } from '@/hooks/useToast'
 import { validateNewsletterForm, getFieldError, hasErrors, formatValidationErrors } from '@/lib/portalValidation'
 import { parseAPIError, sanitize, ValidationError } from '@/lib/errorHandling'
 import FileUpload from '@/components/FileUpload'
+import FileDownloadLink from '@/components/FileDownloadLink'
 import {
   IconPlus,
   IconEdit,
@@ -31,6 +32,7 @@ interface Newsletter {
   id: string
   title: string
   date: string
+  /** Stored reference, not a URL — see `lib/fileDownload.ts`. */
   pdfFile: string
   description?: string
   uploadedAt: string
@@ -118,15 +120,6 @@ export default function NewsletterClient({ newsletters: initialNewsletters }: Ne
     setSelectedNewsletter(newsletter)
   }
 
-  const handleDownload = (newsletter: Newsletter) => {
-    if (newsletter.pdfFile) {
-      const link = document.createElement('a')
-      link.href = newsletter.pdfFile
-      link.download = `${newsletter.title}.pdf`
-      link.click()
-    }
-  }
-
   const handleCreate = async () => {
     if (!selectedFile) {
       error('Please select a PDF file')
@@ -171,7 +164,7 @@ export default function NewsletterClient({ newsletters: initialNewsletters }: Ne
         date: newNewsletter.date,
         description: formData.description,
         file_name: selectedFile.name,
-        file_url: uploadResult.url,
+        file_url: uploadResult.fileRef,
         file_size: uploadResult.size,
         is_featured: false
       }
@@ -441,9 +434,15 @@ export default function NewsletterClient({ newsletters: initialNewsletters }: Ne
                   <button onClick={() => handleView(newsletter)} className="p-1.5 text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded" title="View">
                     <IconEye className="h-4 w-4" />
                   </button>
-                  <a href={newsletter.pdfFile} download className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded" title="Download">
+                  <FileDownloadLink
+                    fileRef={newsletter.pdfFile}
+                    fileName={`${newsletter.title}.pdf`}
+                    className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
+                    title="Download"
+                    onError={(message) => error(message)}
+                  >
                     <IconDownload className="h-4 w-4" />
-                  </a>
+                  </FileDownloadLink>
                   {canEdit && (
                     <>
                       <button onClick={() => startEditing(newsletter)} className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-portal-hover rounded" title="Edit">

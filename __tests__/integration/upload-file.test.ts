@@ -139,7 +139,7 @@ describe('upload-file', () => {
     expect(res.statusCode).toBe(401)
   })
 
-  it('happy path: official uploads to portal-resources, file lands and URL is returned', async () => {
+  it('happy path: official uploads to portal-resources, file lands and a reference is returned', async () => {
     const filename = `${E2E_TAG}-happy-${Date.now()}.txt`
     // ASCII-only — invokeFunction stringifies raw bodies via toString()
     // which is utf-8; non-ASCII bytes would expand and the handler's
@@ -161,7 +161,12 @@ describe('upload-file', () => {
     expect(res.body.bucket).toBe('portal-resources')
     expect(typeof res.body.path).toBe('string')
     expect(res.body.path).toContain(E2E_TAG)
-    expect(res.body.url).toContain('/storage/v1/object/public/portal-resources/')
+    // A private bucket has no URL to hand back — `/object/public/…` answers
+    // 400 for one — so the response carries the object reference and the
+    // display side signs a link when it needs one. See lib/fileDownload.ts.
+    expect(res.body.fileRef).toBe(`storage://portal-resources/${res.body.path}`)
+    expect(res.body.url).toBeUndefined()
+    expect(res.body.publicUrl).toBeUndefined()
     expect(res.body.size).toBe(Buffer.byteLength(content))
 
     const path: string = res.body.path
@@ -195,6 +200,7 @@ describe('upload-file', () => {
     const res = await postUpload(body, { bearerToken: admin.accessToken })
     expect(res.statusCode).toBe(200)
     expect(res.body.bucket).toBe('newsletters')
+    expect(res.body.fileRef).toBe(`storage://newsletters/${res.body.path}`)
     uploaded.push({ bucket: 'newsletters', path: res.body.path })
     expect(await objectExists('newsletters', res.body.path)).toBe(true)
   })
@@ -215,6 +221,10 @@ describe('upload-file', () => {
     const res = await postUpload(body, { bearerToken: executive.accessToken })
     expect(res.statusCode).toBe(200)
     expect(res.body.bucket).toBe('email-images')
+    // The one public bucket, and the one that still gets a plain URL — the
+    // editor drops it straight into mail nobody opens with a session.
+    expect(res.body.url).toContain('/storage/v1/object/public/email-images/')
+    expect(res.body.fileRef).toBe(res.body.url)
     uploaded.push({ bucket: 'email-images', path: res.body.path })
   })
 

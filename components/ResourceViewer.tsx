@@ -4,10 +4,16 @@ import { useState } from 'react'
 import { IconX, IconDownload, IconExternalLink, IconMaximize, IconMinimize, IconLink, IconArticle } from '@tabler/icons-react'
 import { HTMLViewer } from './HTMLViewer'
 import Modal from '@/components/ui/Modal'
+import FileDownloadLink from '@/components/FileDownloadLink'
+import { useFileUrl } from '@/hooks/useFileUrl'
 
 interface ResourceViewerProps {
   resource: {
     title: string
+    /**
+     * The stored reference — `storage://bucket/path` for an uploaded file, a
+     * plain URL for anything else. Signed here, once, when the viewer opens.
+     */
     fileUrl?: string
     externalLink?: string
     description?: string
@@ -20,6 +26,11 @@ interface ResourceViewerProps {
 export default function ResourceViewer({ resource, onClose }: ResourceViewerProps) {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [iframeError, setIframeError] = useState(false)
+  // Minted when the modal opens, so the link lives about as long as the view
+  // it was rendered for. The file type is read off the stored reference
+  // rather than this URL — a signed URL carries a `?token=` the extension
+  // sniffing below would swallow.
+  const { url: fileUrl, isLoading: isResolvingFile, error: fileError } = useFileUrl(resource.fileUrl)
 
   const getFileType = (url: string) => {
     const extension = url.split('.').pop()?.toLowerCase()
@@ -221,6 +232,20 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
 
     if (!resource.fileUrl) return null
 
+    if (isResolvingFile) {
+      return (
+        <div className="flex items-center justify-center h-full text-gray-500">Opening file…</div>
+      )
+    }
+
+    if (fileError || !fileUrl) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-2 p-6 text-center">
+          <p className="text-gray-600">{fileError || 'This file could not be opened.'}</p>
+        </div>
+      )
+    }
+
     switch (fileType) {
       case 'pdf':
         if (iframeError) {
@@ -228,16 +253,15 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
             <div className="flex flex-col items-center justify-center h-full gap-4">
               <p className="text-gray-600">Unable to preview PDF in browser</p>
               <div className="flex gap-3">
-                <a
-                  href={resource.fileUrl}
-                  download
+                <FileDownloadLink
+                  fileRef={resource.fileUrl}
                   className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
                 >
                   <IconDownload className="h-5 w-5" />
                   Download PDF
-                </a>
+                </FileDownloadLink>
                 <a
-                  href={resource.fileUrl}
+                  href={fileUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 flex items-center gap-2"
@@ -252,12 +276,12 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
         return (
           <div className="w-full h-full">
             <object
-              data={resource.fileUrl}
+              data={fileUrl}
               type="application/pdf"
               className="w-full h-full"
             >
               <iframe
-                src={`${resource.fileUrl}#view=FitH`}
+                src={`${fileUrl}#view=FitH`}
                 className="w-full h-full"
                 title={resource.title}
               />
@@ -269,7 +293,7 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
         return (
           <div className="flex items-center justify-center h-full bg-gray-100">
             <img
-              src={resource.fileUrl}
+              src={fileUrl}
               alt={resource.title}
               className="max-w-full max-h-full object-contain"
             />
@@ -279,7 +303,7 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
       case 'video':
         return (
           <video
-            src={resource.fileUrl}
+            src={fileUrl}
             controls
             className="w-full h-full"
             controlsList="nodownload"
@@ -292,7 +316,7 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
         return (
           <div className="flex items-center justify-center h-full">
             <audio
-              src={resource.fileUrl}
+              src={fileUrl}
               controls
               className="w-full max-w-md"
             >
@@ -318,16 +342,15 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
               <p className="text-sm text-gray-500">Preview not available for this file type</p>
             </div>
             <div className="flex gap-3">
-              <a
-                href={resource.fileUrl}
-                download
+              <FileDownloadLink
+                fileRef={resource.fileUrl}
                 className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 flex items-center gap-2"
               >
                 <IconDownload className="h-5 w-5" />
                 Download File
-              </a>
+              </FileDownloadLink>
               <a
-                href={resource.fileUrl}
+                href={fileUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="bg-gray-600 text-white px-6 py-3 rounded-lg hover:bg-gray-700 flex items-center gap-2"
@@ -343,14 +366,13 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
         return (
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <p className="text-gray-600">Preview not available for this file type</p>
-            <a
-              href={resource.fileUrl}
-              download
+            <FileDownloadLink
+              fileRef={resource.fileUrl}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
             >
               <IconDownload className="h-5 w-5" />
               Download File
-            </a>
+            </FileDownloadLink>
           </div>
         )
     }
@@ -381,14 +403,13 @@ export default function ResourceViewer({ resource, onClose }: ResourceViewerProp
               {isFullscreen ? <IconMinimize className="h-5 w-5" /> : <IconMaximize className="h-5 w-5" />}
             </button>
             {resource.fileUrl && (
-              <a
-                href={resource.fileUrl}
-                download
+              <FileDownloadLink
+                fileRef={resource.fileUrl}
                 className="p-2 text-blue-400 hover:text-blue-800 hover:bg-blue-50 rounded"
                 title="Download"
               >
                 <IconDownload className="h-5 w-5" />
-              </a>
+              </FileDownloadLink>
             )}
             {resource.externalLink && (
               <a

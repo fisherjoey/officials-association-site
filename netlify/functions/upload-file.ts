@@ -4,6 +4,7 @@ import { supabase, getPrincipal, errorResponse } from './_shared/handler'
 import { hasRole } from '../../lib/roles'
 import { Logger } from '../../lib/logger'
 import { SITE_URL } from '../../lib/siteConfig'
+import { isPublicBucket, toStorageRef } from '../../lib/storageRefs'
 
 const ALLOWED_ORIGINS = [
   SITE_URL,
@@ -261,9 +262,16 @@ export const handler: Handler = async (event): Promise<{ statusCode: number; hea
           return
         }
 
-        const { data: { publicUrl } } = supabase.storage
-          .from(bucket)
-          .getPublicUrl(data.path)
+        // `/object/public/…` resolves only for a public bucket, so a public
+        // URL is handed back for `email-images` (the Jodit image path, whose
+        // links end up in mail nobody reads with a Supabase session) and for
+        // nothing else. Every other bucket gets a `storage://` reference, and
+        // whoever displays it mints a signed link at that moment — see
+        // `lib/fileDownload.ts`.
+        const publicUrl = isPublicBucket(bucket)
+          ? supabase.storage.from(bucket).getPublicUrl(data.path).data.publicUrl
+          : undefined
+        const fileRef = publicUrl ?? toStorageRef(bucket, data.path)
 
         await logger.audit('CREATE', 'file', data.path, {
           actorId: authUser.id,
@@ -282,6 +290,10 @@ export const handler: Handler = async (event): Promise<{ statusCode: number; hea
           body: JSON.stringify({
             success: true,
             fileName,
+            // What a row should store. `url`/`publicUrl` are present only for
+            // the public bucket — the editor reads them, and for anything
+            // else there is no URL to give.
+            fileRef,
             url: publicUrl,
             publicUrl,
             size: fileSize,
