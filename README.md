@@ -66,6 +66,48 @@ Most members open this between games, on a phone.
 
 ---
 
+## What's in it
+
+### Public site
+
+Everything a league or a prospective official sees. All of it is editable from the portal, so publishing does not mean a deploy.
+
+Home, About with the executive team, and News. Training carries the certification pathway and a registration link per event. Resources is a document library with categories and access levels. Two recruitment pages, Become a referee and New officials. A "request officials" form feeds the service-request inbox in the portal, and a contact form routes by category to whichever mailbox you configure. Search covers every published page and article.
+
+### Members portal
+
+Behind the login, dark by default, with its own mobile layout.
+
+The dashboard shows upcoming events, the latest announcement, the newsletter and scheduler updates. The member directory lists the roster with certification level, rank and contact details, filtered and searchable. Members edit their own profile, including emergency contact. There is a calendar of association events, plus the members' view of news and resources, which includes anything marked members-only.
+
+### Admin
+
+Content management covers public pages, news, training events, resources, the officials list and the executive team, with rich text and image upload. Member management handles email invites, the accept-invite flow, and role and capability assignment. Two inboxes: service requests from the public form, and contact submissions.
+
+### Optional modules
+
+Eight features are on or off from one config block, and a disabled one is never built rather than hidden:
+
+`evaluations` `statistics` `newsletter` `ruleModifications` `schedulerUpdates` `mail` `adminLogs` `adminEmailHistory`
+
+A flag is not an access control. See [Optional modules](#optional-modules) for what it does and does not do.
+
+### Underneath
+
+Next.js 15, exported as a static site, with Netlify Functions behind it.
+
+Supabase Postgres with 14 ordered migrations, row-level security on all 25 tables, and storage policies on five buckets. The chain refuses to run against a database that is not empty rather than half-applying to it.
+
+Email goes through Resend, SMTP or Microsoft Graph, chosen by one environment variable. An unconfigured provider throws instead of silently dropping mail.
+
+Roles are three structural rungs, member, executive and admin, plus capabilities that cut across them: evaluator, scheduler, instructor, assignor.
+
+Rich text is Jodit, MIT licensed and self-hosted, so there is no editor account to create and no key to obtain.
+
+386 tests, a type check, a lint job, a build that runs with no environment configured at all, and a link checker that fails on any dangling link in the export.
+
+---
+
 ## This is a static export
 
 `next.config.ts` sets `output: 'export'` for production builds. `npm run build` writes a
