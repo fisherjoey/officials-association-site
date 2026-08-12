@@ -49,6 +49,6 @@ New officials receive a starter equipment package discount, paired assignments w
 
 Don't miss this opportunity to be part of our basketball community. The season is starting soon, and we need officials at all levels.
 
-Visit our [application page](/officials/apply) or email recruitment@example.org for more information.
+Visit our [Become a referee page](/become-a-referee) or email recruitment@example.org for more information.
 
 Join us in making basketball better in our region!

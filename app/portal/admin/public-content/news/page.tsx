@@ -225,9 +225,9 @@ export default function PublicNewsAdmin() {
       {/* Header */}
       <div className="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">Public News Articles</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">News Drafts</h1>
           <p className="mt-1 sm:mt-2 text-sm sm:text-base text-gray-600 dark:text-gray-300">
-            Manage news articles displayed on the public website
+            Draft and keep news articles. Publishing to the public site is a separate step.
           </p>
         </div>
         {canEdit && !isCreating && (
@@ -254,6 +254,30 @@ export default function PublicNewsAdmin() {
             Add News Article
           </button>
         )}
+      </div>
+
+      {/*
+        The screen used to be called "Public News Articles" and said it managed
+        what the public website showed. It did not. The public site is a static
+        export: /news and every /news/<slug> page are written to disk when the
+        site builds, out of content/news/*.md. Nothing on the public side reads
+        this table, so saving here changed the list and left the article page
+        404ing - the CMS looked like it worked and did not.
+
+        Rather than delete the screen, it is now honest about what it is: a
+        drafting surface whose output an editor moves into content/news/ and
+        deploys. Wiring it back to the public site means generating those files
+        from these rows at build time, which is a build-pipeline change, not a
+        component change.
+      */}
+      <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-100 sm:p-4">
+        <p className="font-semibold">Saving here does not put an article on the public site.</p>
+        <p className="mt-1">
+          The public site is built as static files. Its news comes from{' '}
+          <code className="rounded bg-amber-100 px-1 py-0.5 font-mono text-xs dark:bg-amber-900/40">content/news/*.md</code>{' '}
+          in the repository, and changes when the site is redeployed. Drafts kept here are for
+          writing and review; someone has to commit the article and deploy before a reader sees it.
+        </p>
       </div>
 
       {/* Search */}

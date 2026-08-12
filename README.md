@@ -30,7 +30,7 @@ and the documents in them do not exist. Regenerate the whole set with
 | ![Home page](docs/screenshots/public-home.jpg) | ![About page](docs/screenshots/public-about.jpg) |
 | Home: hero, tagline and the booking call to action. | About: the section the portal CMS writes, above the values grid. |
 | ![News](docs/screenshots/public-news.jpg) | ![Contact form](docs/screenshots/public-contact.jpg) |
-| News, listed from the `public_news` table. | The contact form, routed by category to a role mailbox. |
+| News, built from the markdown in `content/news/`. | The contact form, routed by category to a role mailbox. |
 
 ### Members portal
 
@@ -42,7 +42,7 @@ and tiles appear depends on the signed-in member's role.
 | | |
 |---|---|
 | ![Member directory](docs/screenshots/portal-members.jpg) | ![Public content admin](docs/screenshots/portal-public-content-admin.jpg) |
-| The member directory, filtered by status, role, certification and city. | The public-content admin, which is the CMS. News, training, resources, officials, executive team and page copy are edited here and published to the public site. |
+| The member directory, filtered by status, role, certification and city. | The public-content admin, which is the CMS. Training, resources, officials, executive team and page copy are edited here and published to the public site. News is drafted here and published as files. |
 
 ![Portal dashboard in dark mode](docs/screenshots/portal-dashboard-dark.jpg)
 
@@ -82,7 +82,7 @@ The dashboard shows upcoming events, the latest announcement, the newsletter and
 
 ### Admin
 
-Content management covers public pages, news, training events, resources, the officials list and the executive team, with rich text and image upload. Member management handles email invites, the accept-invite flow, and role and capability assignment. Two inboxes: service requests from the public form, and contact submissions.
+Content management covers public pages, training events, resources, the officials list and the executive team, with rich text and image upload. News is drafted in the same place but published from `content/news/`. Member management handles email invites, the accept-invite flow, and role and capability assignment. Two inboxes: service requests from the public form, and contact submissions.
 
 ### Optional modules
 
@@ -132,6 +132,10 @@ be missing from the export.
 local `href` out of `out/` and fails on any that resolves to nothing. It is also why
 switching a portal module off has to happen at build time rather than at request time, which
 [Optional modules](#optional-modules) goes into.
+
+`node scripts/check-news-render.mjs` is the news-specific companion. It fails if an article
+file has no exported page, if the list links to anything other than those articles, or if a
+body arrived as literal `##` characters instead of rendered markdown.
 
 ---
 
@@ -340,8 +344,8 @@ npx netlify dev
 ```
 
 That gives you the site and the functions on one origin, with `/api/*` routed the way it is
-in a deploy. Nearly every page needs it: the portal, the news list, resources, training and
-the contact form all go through `/api`.
+in a deploy. Nearly every page needs it: the portal, resources, training and the contact
+form all go through `/api`. `/news` does not, because it is built from files.
 
 **It does not give you your data.** `netlify.toml` sets `[dev] command = "npm run dev"`, so
 Netlify Dev starts the same `next dev` server and proxies it. `NODE_ENV` is `development` on
@@ -736,16 +740,23 @@ unit-tested.
 
 Smaller things that are true about this codebase and will surprise you otherwise.
 
-**News is two systems.** `/news` lists rows from the `public_news` table, fetched in the
-browser. `/news/[slug]` is prerendered at build from `content/news/*.md` through
-`generateStaticParams`. An article you create in the portal CMS appears in the list
-immediately and its page 404s, because that path was never in the export. Either rebuild on
-publish, or move article bodies into the table and render them client-side.
+**News is files, not a table.** `/news` and every `/news/<slug>` page are built from
+`content/news/*.md`. The list reads the same directory `generateStaticParams` walks, so a
+card on the list always has a page behind it. That agreement is load-bearing: when the list
+was fetched from the `public_news` table in the browser instead, an article written in the
+portal CMS showed up in the list and 404ed when anyone clicked it. The table and its CMS
+screen are still here, relabelled "News Drafts", because nothing on the public side reads
+them. Publishing an article means committing a markdown file and deploying. To make the CMS
+publish for real, the shape that works on a static export is generating those files from the
+table during the build and rebuilding on publish. `node scripts/check-news-render.mjs` fails
+if the list and the pages disagree.
 
-**Article bodies are passed through as HTML.** `app/news/[slug]/page.tsx` sanitises
-`article.content` and injects it directly, so the markdown files under `content/news/`
-render with their `##` and `-` characters visible. Anything you write there should be HTML,
-or the page needs `markdownToHtml()` from `lib/content.ts` wired into it.
+**Article bodies are markdown, rendered at build.** `app/news/[slug]/page.tsx` runs the body
+through `markdownToHtml()` and then `sanitizeHtml()` before any of it reaches the page. Raw
+HTML in a content file is dropped rather than rendered, because `remark-html` runs with
+`allowDangerousHtml` off, so a `<script>` pasted into an article produces nothing at all.
+Sanitising happens on render and never on write. The suites under `__tests__/unit/security`
+are there to keep it that way.
 
 **Four npm scripts point at files that do not exist**: `dev:functions`
 (`server/local-functions.js`, where the file on disk is `.ts`), `dev:cms` (Decap CMS was

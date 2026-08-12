@@ -1,4 +1,4 @@
-import { getContentBySlug, getAllContent } from '@/lib/content'
+import { getContentBySlug, getNewsSummaries, markdownToHtml } from '@/lib/content'
 import { sanitizeHtml } from '@/lib/sanitizeHtml'
 import { notFound } from 'next/navigation'
 import Image from 'next/image'
@@ -6,8 +6,7 @@ import Link from 'next/link'
 import '../news.css'
 
 export async function generateStaticParams() {
-  const articles = getAllContent('news')
-  return articles.map((article) => ({
+  return getNewsSummaries().map((article) => ({
     slug: article.slug,
   }))
 }
@@ -41,9 +40,17 @@ export default async function NewsArticlePage({ params }: { params: Promise<{ sl
     notFound()
   }
 
-  // This page is public and prerendered by the static export, so the sanitiser
-  // runs in Node here - see the DOM-free path in lib/sanitizeHtml.
-  const htmlContent = sanitizeHtml(article.content || article.body || '')
+  // Bodies under `content/news/` are markdown. Render them, or the `##` and `-`
+  // reach the reader as literal characters.
+  //
+  // `markdownToHtml` drops raw HTML rather than emitting it, so the sanitiser is
+  // the second of two guards rather than the only one. It still runs, and has to:
+  // it is the guard that survives someone swapping the renderer for one that
+  // passes HTML through. This page is public and prerendered by the static
+  // export, so it runs in Node - see the DOM-free path in lib/sanitizeHtml.
+  // Sanitising on render and never on write is the rule; the comment on
+  // `sanitizeHtml` says why.
+  const htmlContent = sanitizeHtml(await markdownToHtml(article.content || article.body || ''))
 
   const formattedDate = new Date(article.date).toLocaleDateString('en-CA', {
     year: 'numeric',
@@ -128,7 +135,7 @@ export default async function NewsArticlePage({ params }: { params: Promise<{ sl
           <div className="mt-12">
             <h2 className="text-2xl font-bold text-brand-secondary mb-6">More News</h2>
             <div className="grid md:grid-cols-2 gap-6">
-              {getAllContent('news')
+              {getNewsSummaries()
                 .filter(a => a.slug !== article.slug)
                 .slice(0, 2)
                 .map((relatedArticle) => (
