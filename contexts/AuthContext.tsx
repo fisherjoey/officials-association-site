@@ -57,10 +57,14 @@ const supabase = getSupabaseBrowserClient()
  * it in the function layer would only desynchronise the two, and the fix is
  * tracked separately.
  *
- * Capabilities are read from `app_metadata` and nowhere else. They are new, so
- * there is no existing account to keep working, and reading them from the
- * user-writable bag would hand every signed-up account the evaluator grant —
- * widening PLAT-33 rather than holding it still.
+ * The explicit `capabilities` list is read from `app_metadata` and nowhere else.
+ * That is narrower than it looks, and is not a boundary: `role` and `roles`
+ * below still fall back to `user_metadata`, and `toPrincipal()` derives a
+ * capability from either of them, so `user_metadata.role = 'evaluator'` yields
+ * a member holding the evaluator grant. PLAT-33 therefore reaches the
+ * capability grants as well as the rung. Closing it means dropping the
+ * `user_metadata` fallback from the role fields, not just withholding the
+ * `capabilities` key from it.
  */
 function getPrincipal(supabaseUser: SupabaseUser | null): Principal {
   if (!supabaseUser) return toPrincipal(null)

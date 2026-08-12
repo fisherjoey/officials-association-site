@@ -177,10 +177,14 @@ export interface CreateHandlerOptions {
  * resolvers at once and is tracked separately, and removing it in one place
  * only would desynchronise the layers while looking like progress.
  *
- * Capabilities are read from `app_metadata` and nowhere else. They are new, so
- * no existing account depends on the looser path, and reading them from the
- * user-writable bag would let any signed-up account hand itself the evaluator
- * grant — widening PLAT-33 instead of holding it still.
+ * The explicit `capabilities` list is read from `app_metadata` and nowhere else.
+ * That is narrower than it looks, and is not a boundary: `role` and `roles`
+ * below still fall back to `user_metadata`, and `toPrincipal()` derives a
+ * capability from either of them, so `user_metadata.role = 'evaluator'` yields
+ * a member holding the evaluator grant. PLAT-33 therefore reaches the
+ * capability grants as well as the rung. Closing it means dropping the
+ * `user_metadata` fallback from the role fields, not just withholding the
+ * `capabilities` key from it.
  */
 export function getPrincipal(user: Record<string, any> | null | undefined): Principal {
   return toPrincipal({

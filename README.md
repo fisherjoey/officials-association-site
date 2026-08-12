@@ -171,9 +171,11 @@ The migrations enable RLS on every table and grant `anon`, `authenticated` and
 `service_role` explicitly, so nothing relies on Supabase's legacy auto-exposure of new
 tables. The shape is:
 
-`members`. You can read and update your own row. Admins and executives can read and update
-everyone's. A trigger stops an unprivileged PostgREST session from setting or changing its
-own `role`, `capabilities` or `user_id`, even on its own row.
+`members`. You can read your own row. Admins and executives can read everyone's. Nobody
+writes this table from the browser: `authenticated` is granted SELECT and nothing else, so
+every roster write goes through a function holding the service-role key. A trigger is the
+second barrier, stopping an unprivileged session from setting or changing its own `role`,
+`capabilities` or `user_id` on the day someone re-grants UPDATE.
 
 `evaluations`. You can read the evaluations written about you. Admins, executives and anyone
 holding the `evaluator` capability can read all of them. Admins, executives and evaluators can
@@ -574,7 +576,7 @@ exists to prevent.
 
 ### Role resolution trusts user-writable metadata, and this is a blocker
 
-`getUserRole()` in `netlify/functions/_shared/handler.ts` reads the caller's role from
+`getPrincipal()` in `netlify/functions/_shared/handler.ts` reads the caller's role from
 `app_metadata.role` first and falls back to `user_metadata.role`. `app_metadata` is
 server-controlled. `user_metadata` is written by the user, with an ordinary authenticated
 call to Supabase's `PUT /auth/v1/user`.
@@ -597,15 +599,20 @@ they hold: a plain member querying PostgREST directly sees only their own member
 their own evaluations. The hole is that the functions run with the service-role key, RLS
 never applies to them, and their own role check is the only thing standing there.
 
-Capabilities are narrower than the rung is. `getPrincipal()` reads `app_metadata.capabilities`
-and never the `user_metadata` copy, so this trick cannot hand an account the `evaluator`
-grant. It can still make an account an admin, which is worse, so that is no comfort.
+The capabilities are reachable the same way. `getPrincipal()` takes the literal
+`capabilities` key from `app_metadata` only, but it reads `role` and `roles` from
+`user_metadata` too, and a capability slug sitting in either of those resolves to a member
+holding that grant. Send `{"data": {"role": "evaluator"}}` in place of `admin` above and the
+account reads every evaluation in the association, because `netlify/functions/evaluations.ts`
+holds the same service-role key. Admin is still the worse outcome, but not because the
+capability half is protected.
 
 Until it is fixed, turn off self-service signup in Supabase Auth and set
 `app_metadata.role` on every user through the service role. The fix itself is to stop
-reading `user_metadata` for the structural role, in `getPrincipal()` in
+reading `user_metadata` for `role` and `roles`, in `getPrincipal()` in
 `netlify/functions/_shared/handler.ts` and in `contexts/AuthContext.tsx`, which carries the
-same fallback. Tracked as PLAT-33.
+same fallback. Both fields feed the rung and the capability grants, so dropping the fallback
+closes both. Tracked as PLAT-33.
 
 ### Supabase Storage ships with no policy layer
 
