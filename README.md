@@ -688,7 +688,7 @@ Signed links expire, so storing one in `resources.file_url` moves the problem ra
 solving it. The policies already decide who may read a given object, so what is missing is the
 code that asks for the link.
 
-### `npm audit` still has ten production findings
+### `npm audit` still has four production findings
 
 `npm audit --omit=dev` used to report 42 vulnerabilities in production dependencies, 40 of
 them high. Most of that came from two packages nothing in the app actually imports:
@@ -697,7 +697,18 @@ and `pdfjs-dist` / `react-pdf` (`PDFViewer.tsx` renders PDFs with a plain
 `<object>`/`<iframe>`, not a PDF.js canvas; react-pdf was never wired up, and a 1.1MB
 `public/pdf.worker.min.js` was shipping in every build without a single request for it).
 Dropping both, then running `npm audit fix` for what it could resolve without a major bump,
-took the count from 42 down to 10: 2 low, 8 high.
+took the count from 42 down to 10: 2 low, 8 high. Moving `@netlify/functions` from 4 to 5
+cleared six of those, leaving 4 high.
+
+That bump was smaller than it looked. Version 4 shipped 13 direct dependencies and 311
+transitive ones, which is where `@netlify/blobs`, `@netlify/dev-utils` (and so `image-size`)
+and `@netlify/zip-it-and-ship-it` (and so `esbuild`) came from. Version 5 moved the
+local-development half of the package out into a separate `@netlify/functions-dev` and ships
+one dependency, `@netlify/types`, taking the install from 82MB to 84KB. The removed `/dev`
+subpath was the only breaking change and nothing here imported it. `Handler`, `HandlerEvent`,
+`HandlerContext` and `HandlerResponse` are byte-identical across the two versions, and
+`schedule()` is still `(cron, handler) => handler`, so none of the 13 files under
+`netlify/functions/` that import from the package needed an edit.
 
 What's left, and why it's staying for now:
 
@@ -706,15 +717,6 @@ What's left, and why it's staying for now:
   `images: { unoptimized: true }` means Next's sharp-based image server never runs in this
   app, and postcss only ever processes this repo's own Tailwind source, never
   user-supplied CSS. Not reachable from a request.
-- **`@netlify/functions` → `@netlify/blobs`, `@netlify/dev-utils`, `image-size`, and,
-  separately, `esbuild` / `@netlify/zip-it-and-ship-it` (high and low).** The fix is
-  `@netlify/functions@5`, a major bump touching every one of the 12 function handlers that
-  import `Handler` / `HandlerEvent` from it. That's enough surface to need its own lane,
-  tested against a real deploy, rather than a drive-by fix here. Checked what actually runs,
-  though: the package's deployed entry point (`dist/main.cjs`) only requires Node's own
-  `process`, `stream` and `util`. Blobs, dev-utils and the esbuild-based bundler sit behind
-  the package's `/dev` (local CLI) subpath, which nothing in this repo imports. None of it is
-  reachable from a running function, only from local tooling.
 - **`xlsx` (high, no fix available).** SheetJS stopped publishing patched versions to npm;
   the fix exists only on their own CDN, outside what `npm audit` can resolve.
   `lib/stats/readWorkbook.ts` is the only importer, runs entirely in the browser, and only
@@ -758,12 +760,10 @@ HTML in a content file is dropped rather than rendered, because `remark-html` ru
 Sanitising happens on render and never on write. The suites under `__tests__/unit/security`
 are there to keep it that way.
 
-**Four npm scripts point at files that do not exist**: `dev:functions`
-(`server/local-functions.js`, where the file on disk is `.ts`), `dev:cms` (Decap CMS was
-removed and there is no `public/admin`), `test:supabase` and `test:buckets`. All four are
-safe to delete on the day you fork: no code path calls them. `decap-cms-app` itself, the
-large unused package `dev:cms` pointed at, is already gone from `dependencies` (see
-[Known gaps](#known-gaps)).
+**`npm start` serves the export rather than running Next.** `output: 'export'` leaves no
+server to start, and `next start` refuses to run against an exported build. The script calls
+`npx serve out` instead, which is what Next's own error message tells you to do. It serves
+whatever `npm run build` last wrote, so build first or you are reading stale output.
 
 **Mail addresses are derived, and derivable.** Setting `NEXT_PUBLIC_EMAIL_DOMAIN` moves all
 eleven role mailboxes at once, and each one is `<role>@<your domain>`. The domain is public
