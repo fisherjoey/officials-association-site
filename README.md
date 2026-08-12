@@ -116,9 +116,9 @@ run a local database or to regenerate the screenshots.
 
 ### Migrations
 
-`supabase/migrations/` holds thirteen files that build the whole schema: members, roles and
+`supabase/migrations/` holds fourteen files that build the whole schema: members, roles and
 their RLS policies, portal content, evaluations, public content, invite tokens, email
-history, logging, submissions and season stats.
+history, logging, submissions, season stats, and the storage buckets with their policies.
 
 ```bash
 npx supabase link --project-ref <your-project-ref>
@@ -141,29 +141,42 @@ To try it locally first:
 
 ```bash
 npx supabase start
-npx supabase db reset   # applies all thirteen against an empty database
+npx supabase db reset   # applies all fourteen against an empty database
 ```
 
 ### Storage buckets
 
-Create four buckets by hand in the dashboard, all private:
+The last migration in the chain creates five buckets and the policies that guard them. You do
+not need to create anything in the dashboard.
 
-| Bucket | Holds |
-|---|---|
-| `portal-resources` | The general document library. Any authenticated member can upload here. |
-| `newsletters` | Newsletter PDFs. Admin and executive only. |
-| `training-materials` | Clinic and course material. Admin and executive only. |
-| `email-images` | Images embedded in outgoing mail. Admin and executive only. |
+| Bucket | Public | Reads | Writes |
+|---|---|---|---|
+| `email-images` | yes | anyone holding the object URL | admin, executive |
+| `portal-resources` | no | any signed-in member | any signed-in member, but only the uploader or an admin or executive can change or remove an item |
+| `newsletters` | no | any signed-in member | admin, executive |
+| `training-materials` | no | any signed-in member | admin, executive |
+| `evaluations` | no | whoever uploaded the file, plus admins and executives | any signed-in member |
 
-Who may write to which bucket is enforced in `netlify/functions/upload-file.ts`, on the
-service-role path. See [Known gaps](#known-gaps): there are no storage policies in this
-template.
+`email-images` is public because those images are embedded in outgoing mail and the person
+reading that mail in Gmail has no Supabase session. Public means anyone holding an object URL
+can fetch the bytes. It does not mean the bucket can be browsed: listing goes through the same
+policies as everything else, and no anonymous caller has a read policy anywhere in the file.
+The other four are private, and for them RLS is the whole access model.
 
-Nothing checks your work here. `npm run test:buckets` was the script that would have, and it
-is one of the four broken ones listed under [Documented
-assumptions](#documented-assumptions). A bucket you forgot to create, or named slightly
-differently, shows up as an upload failing in the portal weeks later. Read the four names
-back off the dashboard before you move on.
+Every privilege check calls `public.is_admin_or_executive()`, the same helper the table
+policies use, so storage and rows cannot drift apart when the role model changes. The
+reasoning behind each bucket is written out at the top of
+`supabase/migrations/20260810001400_storage_policies.sql`. Read that before you change one.
+
+The migration is also what decides whether a bucket is public. Flip `portal-resources` to
+public in the dashboard and the next `db push` flips it back. Change the migration instead.
+
+`netlify/functions/upload-file.ts` holds the service-role key and bypasses all of this, so the
+role check inside that function is still the only thing guarding the service-role path. The
+policies protect the browser upload path in `lib/fileUpload.ts`, and they are what is left
+underneath if someone makes a bucket public.
+
+One thing they do not yet do is serve downloads. See [Known gaps](#known-gaps).
 
 ### Row-level security
 
@@ -614,15 +627,20 @@ reading `user_metadata` for `role` and `roles`, in `getPrincipal()` in
 same fallback. Both fields feed the rung and the capability grants, so dropping the fallback
 closes both. Tracked as PLAT-33.
 
-### Supabase Storage ships with no policy layer
+### Downloads from the private buckets need signed URLs
 
-The migrations do not create a single storage policy. Buckets are private by default, so the
-template is not leaking anything as shipped, and every upload and download goes through a
-function holding the service-role key that enforces its own rules.
+The buckets and their policies ship in the migration chain, described under [Storage
+buckets](#storage-buckets). The portal's download links do not go through them.
+`lib/fileUpload.ts` builds a `getPublicUrl()` link after each upload and the row it writes
+stores that string, so the resources list, the newsletter list and the evaluation attachments
+all point at `/storage/v1/object/public/...`. That route only resolves for a public bucket,
+which means `email-images` and nothing else. Every other download link in the portal comes
+back 400.
 
-That is the whole protection. Make a bucket public and there is no row-level layer
-underneath it: every object in that bucket becomes world-readable by URL. Write your own
-policies before you do. Tracked as PLAT-36.
+The fix is `createSignedUrl()` at render time instead of `getPublicUrl()` at upload time.
+Signed links expire, so storing one in `resources.file_url` moves the problem rather than
+solving it. The policies already decide who may read a given object, so what is missing is the
+code that asks for the link.
 
 ### `npm audit` still has ten production findings
 
