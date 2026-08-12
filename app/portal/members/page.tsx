@@ -16,6 +16,15 @@ import {
 import { parseAPIError, sanitize, ValidationError } from '@/lib/errorHandling'
 import { DataTable } from '@/components/ui/DataTable'
 import { ColumnDef } from '@tanstack/react-table'
+import {
+  CAPABILITIES,
+  CAPABILITY_LABELS,
+  DEFAULT_STRUCTURAL_ROLE,
+  STRUCTURAL_ROLES,
+  STRUCTURAL_ROLE_LABELS,
+  normalizeCapability,
+  normalizeStructuralRole,
+} from '@/lib/roles'
 
 interface Member {
   id?: string
@@ -29,6 +38,7 @@ interface Member {
   rank?: number
   status?: string
   role?: string
+  capabilities?: string[]
   address?: string
   city?: string
   province?: string
@@ -51,7 +61,7 @@ interface Activity {
 }
 
 export default function MembersPage() {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const [members, setMembers] = useState<Member[]>([])
   const [filteredMembers, setFilteredMembers] = useState<Member[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -73,7 +83,8 @@ export default function MembersPage() {
     phone: '',
     certification_level: '',
     status: 'active',
-    role: 'official'
+    role: DEFAULT_STRUCTURAL_ROLE,
+    capabilities: []
   })
   const [activityForm, setActivityForm] = useState<Activity>({
     member_id: '',
@@ -103,25 +114,33 @@ export default function MembersPage() {
   const [isBulkAdding, setIsBulkAdding] = useState(false)
 
   // Check if user has admin/executive access
-  const hasAccess = user.role === 'admin' || user.role === 'executive'
+  const hasAccess = hasRole('executive')
 
   // Only admins can modify user roles
-  const canModifyRoles = user.role === 'admin'
+  const canModifyRoles = hasRole('admin')
 
-  // Format role for display (capitalize first letter)
+  // Label a stored role string. Falls back to the raw value so a row written
+  // before the ladder was constrained still renders as itself rather than as
+  // the default — an unexpected value should look wrong, not look fine.
   const formatRole = (role: string) => {
-    return role.charAt(0).toUpperCase() + role.slice(1)
+    const known = normalizeStructuralRole(role)
+    return known ? STRUCTURAL_ROLE_LABELS[known] : role
   }
 
-  // Get role badge color
+  const formatCapability = (capability: string) => {
+    const known = normalizeCapability(capability)
+    return known ? CAPABILITY_LABELS[known] : capability
+  }
+
+  // Get role badge color. Capability grants get their own chips beside the
+  // badge; they are not rungs and colouring them like one is what made
+  // "evaluator" look mutually exclusive with "executive".
   const getRoleBadgeColor = (role: string) => {
-    switch (role) {
+    switch (normalizeStructuralRole(role)) {
       case 'admin':
         return 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300'
       case 'executive':
         return 'bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-300'
-      case 'evaluator':
-        return 'bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300'
       default:
         return 'bg-blue-900/40 text-blue-400'
     }
@@ -205,7 +224,7 @@ export default function MembersPage() {
           email,
           name: email.split('@')[0], // Temporary name from email prefix
           status: 'active',
-          role: 'official'
+          role: DEFAULT_STRUCTURAL_ROLE
         })
 
         if (result.inviteSent) {
@@ -278,7 +297,7 @@ export default function MembersPage() {
 
     // Apply role filter
     if (roleFilter !== 'all') {
-      filtered = filtered.filter(member => (member.role || 'official') === roleFilter)
+      filtered = filtered.filter(member => (member.role || DEFAULT_STRUCTURAL_ROLE) === roleFilter)
     }
 
     // Apply certification filter
@@ -372,8 +391,8 @@ export default function MembersPage() {
       accessorKey: 'role',
       header: 'Role',
       cell: ({ row }) => (
-        <span className={`px-2 py-1 text-xs rounded-full ${getRoleBadgeColor(row.original.role || 'official')}`}>
-          {formatRole(row.original.role || 'official')}
+        <span className={`px-2 py-1 text-xs rounded-full ${getRoleBadgeColor(row.original.role || DEFAULT_STRUCTURAL_ROLE)}`}>
+          {formatRole(row.original.role || DEFAULT_STRUCTURAL_ROLE)}
         </span>
       ),
     },
@@ -404,7 +423,8 @@ export default function MembersPage() {
       phone: '',
       certification_level: '',
       status: 'active',
-      role: 'official'
+      role: DEFAULT_STRUCTURAL_ROLE,
+      capabilities: []
     })
     setIsEditing(true)
     setShowMemberModal(true)
@@ -740,10 +760,9 @@ export default function MembersPage() {
             className="flex-shrink-0 pl-2 pr-6 py-1 text-xs border border-gray-300 dark:border-portal-border bg-white dark:bg-portal-surface text-gray-700 dark:text-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none"
           >
             <option value="all">Role</option>
-            <option value="official">Official</option>
-            <option value="evaluator">Evaluator</option>
-            <option value="executive">Executive</option>
-            <option value="admin">Admin</option>
+            {STRUCTURAL_ROLES.map(r => (
+              <option key={r} value={r}>{STRUCTURAL_ROLE_LABELS[r]}</option>
+            ))}
           </select>
 
           <select
@@ -1057,19 +1076,61 @@ export default function MembersPage() {
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Role</label>
                     {isEditing && canModifyRoles ? (
                       <select
-                        value={editForm.role || 'official'}
+                        value={editForm.role || DEFAULT_STRUCTURAL_ROLE}
                         onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-portal-surface text-gray-900 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500"
                       >
-                        <option value="official">Official</option>
-                        <option value="evaluator">Evaluator</option>
-                        <option value="executive">Executive</option>
-                        <option value="admin">Admin</option>
+                        {STRUCTURAL_ROLES.map(r => (
+                          <option key={r} value={r}>{STRUCTURAL_ROLE_LABELS[r]}</option>
+                        ))}
                       </select>
                     ) : (
-                      <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${getRoleBadgeColor(selectedMember?.role || 'official')}`}>
-                        {formatRole(selectedMember?.role || 'official')}
+                      <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${getRoleBadgeColor(selectedMember?.role || DEFAULT_STRUCTURAL_ROLE)}`}>
+                        {formatRole(selectedMember?.role || DEFAULT_STRUCTURAL_ROLE)}
                       </span>
+                    )}
+                  </div>
+
+                  {/* Capability grants. Separate control from Role on purpose:
+                      these are not further rungs on the same ladder, they are
+                      jobs, and any number of them can be held at once. */}
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Capabilities</label>
+                    {isEditing && canModifyRoles ? (
+                      <div className="flex flex-wrap gap-x-4 gap-y-2">
+                        {CAPABILITIES.map(capability => {
+                          const held = (editForm.capabilities || []).includes(capability)
+                          return (
+                            <label key={capability} className="flex items-center gap-2 text-sm text-gray-900 dark:text-white">
+                              <input
+                                type="checkbox"
+                                checked={held}
+                                onChange={(e) => {
+                                  const current = editForm.capabilities || []
+                                  setEditForm({
+                                    ...editForm,
+                                    capabilities: e.target.checked
+                                      ? [...current, capability]
+                                      : current.filter(c => c !== capability),
+                                  })
+                                }}
+                                className="rounded border-gray-300 dark:border-gray-600 text-brand-primary focus:ring-brand-primary"
+                              />
+                              {CAPABILITY_LABELS[capability]}
+                            </label>
+                          )
+                        })}
+                      </div>
+                    ) : (selectedMember?.capabilities || []).length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {(selectedMember?.capabilities || []).map(capability => (
+                          <span key={capability} className="inline-block px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300">
+                            {formatCapability(capability)}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500 dark:text-gray-400">None</p>
                     )}
                   </div>
                 </div>

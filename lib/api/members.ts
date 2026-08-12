@@ -9,6 +9,7 @@ import {
   createMockMember, updateMockMember, deleteMockMember
 } from '../mockData/members'
 import { getFromCache, saveToCache, invalidateCache, CACHE_TTL } from '../cache'
+import { DEFAULT_STRUCTURAL_ROLE } from '../roles'
 
 export const membersAPI = {
   async getAll(options?: { forceRefresh?: boolean }) {
@@ -116,7 +117,7 @@ export const membersAPI = {
     const res = await apiFetch(`${API_BASE}/supabase-auth-admin`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ action: 'resend', email: member.email, name: member.name, role: member.role || 'official' })
+      body: JSON.stringify({ action: 'resend', email: member.email, name: member.name, role: member.role || DEFAULT_STRUCTURAL_ROLE })
     })
     invalidateCache('members')
     return res.json()

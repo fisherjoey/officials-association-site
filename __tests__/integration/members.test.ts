@@ -43,7 +43,8 @@ async function seedMemberRow(
       user_id: user.id,
       email: user.email,
       name,
-      role: user.role,
+      role: user.structuralRole,
+      capabilities: user.capabilities,
       status: 'active',
       ...extra,
     })
@@ -194,7 +195,7 @@ describe('members PUT', () => {
       .select('role, email, netlify_user_id, phone')
       .eq('id', memberA.id)
       .single()
-    expect(data?.role).toBe('official')
+    expect(data?.role).toBe('member')
     expect(data?.email).toBe(officialA.email.toLowerCase())
     expect(data?.netlify_user_id).toBeNull()
     expect(data?.phone).toBe('403-555-1111')
@@ -231,7 +232,7 @@ describe('members PUT', () => {
       id: memberB.id,
       phone: '403-555-2222',
       status: 'inactive',
-      role: 'mentor',
+      role: 'executive',
       certification_level: tag('Cert'),
     }
     const res = await invokeFunction(handler, {
@@ -251,7 +252,7 @@ describe('members PUT', () => {
     expect(data).toEqual({
       phone: '403-555-2222',
       status: 'inactive',
-      role: 'mentor',
+      role: 'executive',
       certification_level: body.certification_level,
     })
   })

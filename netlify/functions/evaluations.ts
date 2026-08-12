@@ -1,15 +1,28 @@
-import { createHandler, supabase, type UserRole, errorResponse } from './_shared/handler'
+import { createHandler, supabase, errorResponse } from './_shared/handler'
+import {
+  can,
+  canViewAllEvaluations,
+  isAdminOrExecutive,
+  type Principal,
+} from '../../lib/roles'
 
-// Fine-grained role checks for evaluations
-function canViewAllEvaluations(role: UserRole): boolean {
-  return ['admin', 'executive', 'evaluator'].includes(role)
-}
-function canCreateEvaluations(role: UserRole): boolean {
-  return ['admin', 'executive', 'evaluator'].includes(role)
-}
-function canModifyEvaluations(role: UserRole): boolean {
-  return ['admin', 'executive'].includes(role)
-}
+/**
+ * Who may do what with an evaluation.
+ *
+ * These used to be three inline `['admin','executive','evaluator'].includes()`
+ * calls against a flat role string, and they were the only place `evaluator`
+ * meant anything — the RLS policies could not express it, so the check lived
+ * here and here only. `20260810001500_role_model.sql` now applies the same
+ * union in SQL through `has_capability(auth.uid(), 'evaluator')`, so this file
+ * is no longer the last line of defence. It still runs first, and it still
+ * produces the better error message.
+ *
+ * Reading and creating come from `lib/roles.ts` so the two enforcement points
+ * cannot drift. Editing and deleting stay local: the rule has a carve-out
+ * ("…or you wrote it") that only this layer can evaluate.
+ */
+const canCreateEvaluations = canViewAllEvaluations
+const canModifyEvaluations = isAdminOrExecutive
 
 const EVAL_SELECT = `
   *,
@@ -21,8 +34,13 @@ export const handler = createHandler({
   name: 'evaluations',
   auth: 'authenticated',
   handler: async ({ event, logger, user }) => {
-    const userRole = user!.role
+    const principal: Principal = user!.principal
     const userEmail = user!.email
+    // Audit lines record the rung and the grants, not just the rung. "member"
+    // alone no longer explains why a request was allowed through.
+    const userRole = user!.capabilities.length > 0
+      ? `${user!.role}+${user!.capabilities.join('+')}`
+      : user!.role
 
     switch (event.httpMethod) {
       case 'GET': {
@@ -44,7 +62,7 @@ export const handler = createHandler({
             return { statusCode: 404, body: JSON.stringify({ error: 'Not found' }) }
           }
 
-          if (!canViewAllEvaluations(userRole)) {
+          if (!canViewAllEvaluations(principal)) {
             const { data: memberData } = await supabase
               .from('members')
               .select('id')
@@ -65,7 +83,7 @@ export const handler = createHandler({
         }
 
         if (member_id) {
-          if (!canViewAllEvaluations(userRole)) {
+          if (!canViewAllEvaluations(principal)) {
             const { data: memberData } = await supabase
               .from('members')
               .select('id')
@@ -73,7 +91,7 @@ export const handler = createHandler({
               .maybeSingle()
 
             // No members row for this user_id → they have no evaluations.
-            // Return an empty list so the UX matches "official with row but
+            // Return an empty list so the UX matches "member with a row but
             // no evaluations" (avoids the misleading 403 message).
             if (!memberData) {
               return { statusCode: 200, body: JSON.stringify([]) }
@@ -97,7 +115,7 @@ export const handler = createHandler({
         }
 
         if (evaluator_id) {
-          if (!canViewAllEvaluations(userRole)) {
+          if (!canViewAllEvaluations(principal)) {
             return errorResponse({
             code: 'forbidden',
             message: 'Forbidden - Insufficient permissions.'.replace('..', '.'),
@@ -114,7 +132,7 @@ export const handler = createHandler({
           return { statusCode: 200, body: JSON.stringify(data) }
         }
 
-        if (!canViewAllEvaluations(userRole)) {
+        if (!canViewAllEvaluations(principal)) {
           return errorResponse({
             code: 'forbidden',
             message: 'Forbidden - You can only view your own evaluations.'.replace('..', '.'),
@@ -131,7 +149,7 @@ export const handler = createHandler({
       }
 
       case 'POST': {
-        if (!canCreateEvaluations(userRole)) {
+        if (!canCreateEvaluations(principal)) {
           return errorResponse({
             code: 'forbidden',
             message: 'Forbidden - You do not have permission to create evaluations.'.replace('..', '.'),
@@ -195,8 +213,8 @@ export const handler = createHandler({
         // Carve-out: an evaluator may modify an evaluation whose
         // evaluator_id matches their own member.id (FK to members.id, not
         // user_id). Admin/executive bypass this check entirely.
-        if (!canModifyEvaluations(userRole)) {
-          if (userRole !== 'evaluator') {
+        if (!canModifyEvaluations(principal)) {
+          if (!can(principal, 'evaluator')) {
             return errorResponse({
               code: 'forbidden',
               message: 'Only administrators and executives can edit evaluations.',
@@ -255,7 +273,7 @@ export const handler = createHandler({
       }
 
       case 'DELETE': {
-        if (!canModifyEvaluations(userRole)) {
+        if (!canModifyEvaluations(principal)) {
           return errorResponse({
             code: 'forbidden',
             message: 'Forbidden - Only administrators and executives can delete evaluations.'.replace('..', '.'),

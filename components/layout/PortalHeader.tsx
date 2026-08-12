@@ -36,9 +36,10 @@ import {
   NEWSLETTER_NAME,
   isRouteEnabled,
 } from '@/lib/siteConfig'
+import { describePrincipal } from '@/lib/roles'
 
 export default function PortalHeader() {
-  const { user } = useRole()
+  const { user, principal, hasRole } = useRole()
   const { logout } = useAuth()
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -67,32 +68,29 @@ export default function PortalHeader() {
   // Check if in dev mode
   const isDevMode = process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_DISABLE_AUTH_DEV === 'true'
 
-  const getRoleBadgeColor = (role: string) => {
-    switch(role) {
-      case 'admin': return 'bg-red-500'
-      case 'executive': return 'bg-purple-500'
-      case 'evaluator': return 'bg-green-500'
-      case 'mentor': return 'bg-yellow-500'
-      default: return 'bg-blue-500'
-    }
-  }
+  // The badge shows the rung; the label spells out the rung and any grants.
+  // These used to be two switches over one flat role, so a person could be
+  // shown as an evaluator or as an executive but never as both — the badge
+  // was reporting whichever of the two the resolver happened to pick.
+  const roleBadgeColor = !principal.role
+    ? 'bg-gray-500'
+    : principal.role === 'admin'
+      ? 'bg-red-500'
+      : principal.role === 'executive'
+        ? 'bg-purple-500'
+        : 'bg-blue-500'
 
-  const getRoleLabel = (role: string) => {
-    switch(role) {
-      case 'admin': return 'Administrator'
-      case 'executive': return 'Executive'
-      case 'evaluator': return 'Evaluator'
-      case 'mentor': return 'Mentor'
-      default: return 'Official'
-    }
-  }
+  const roleLabel = describePrincipal(principal)
 
   type PortalLink = { href: string; label: string; icon: typeof IconHome; external?: boolean; executive?: boolean }
 
-  // Every list below is filtered through isRouteEnabled(). A module switched
-  // off in lib/siteConfig.ts is not in the static export, so its link would be
-  // a silent 404 rather than a broken build — the flag has to reach the nav
-  // from the same place it reaches next.config.ts.
+  // Two independent gates, and both have to pass. isRouteEnabled() asks
+  // whether the module is switched on in lib/siteConfig.ts, which decides
+  // whether the page reached the static export at all; a link to a module that
+  // is off is a silent 404 rather than a broken build. hasRole() asks whether
+  // this member is allowed to see it. Neither answers the other's question, so
+  // the role check narrows the list and the module filter runs over whatever
+  // is left.
   const primaryLinks: PortalLink[] = [
     { href: '/portal', label: 'Dashboard', icon: IconHome },
     { href: '/portal/calendar', label: 'Calendar', icon: IconCalendar },
@@ -101,7 +99,7 @@ export default function PortalHeader() {
   ].filter(link => isRouteEnabled(link.href))
 
   const staffLinks: PortalLink[] = (
-    user.role === 'admin' || user.role === 'executive'
+    hasRole('executive')
       ? [{ href: '/portal/mail', label: 'Send Email', icon: IconMail }]
       : []
   ).filter(link => isRouteEnabled(link.href))
@@ -154,11 +152,11 @@ export default function PortalHeader() {
                   className="flex items-center gap-2 hover:bg-white/5 px-3 py-2 rounded"
                 >
                   <div className="h-8 w-8 bg-orange-500 rounded-lg flex items-center justify-center text-sm font-bold">
-                    {user.name.split(' ').map(n => n[0]).join('')}
+                    {(user?.name ?? '').split(' ').map(n => n[0]).join('')}
                   </div>
-                  <span className="font-medium">{user.name}</span>
-                  <span className={`px-2 py-0.5 text-xs rounded-md font-medium ${getRoleBadgeColor(user.role)}`}>
-                    {getRoleLabel(user.role)}
+                  <span className="font-medium">{user?.name}</span>
+                  <span className={`px-2 py-0.5 text-xs rounded-md font-medium ${roleBadgeColor}`}>
+                    {roleLabel}
                   </span>
                   <IconChevronDown className="h-4 w-4" />
                 </button>
@@ -268,16 +266,16 @@ export default function PortalHeader() {
               <div className="px-4 py-3 border-b border-white/10">
                 <div className="flex items-center gap-2 mb-3">
                   <div className="h-10 w-10 bg-orange-500 rounded-lg flex items-center justify-center font-bold">
-                    {user.name.split(' ').map(n => n[0]).join('')}
+                    {(user?.name ?? '').split(' ').map(n => n[0]).join('')}
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{user.name}</span>
-                      <span className={`px-2 py-0.5 text-xs rounded-md font-medium ${getRoleBadgeColor(user.role)}`}>
-                        {getRoleLabel(user.role)}
+                      <span className="font-medium">{user?.name}</span>
+                      <span className={`px-2 py-0.5 text-xs rounded-md font-medium ${roleBadgeColor}`}>
+                        {roleLabel}
                       </span>
                     </div>
-                    <div className="text-xs text-gray-400">{user.email || ''}</div>
+                    <div className="text-xs text-gray-400">{user?.email || ''}</div>
                   </div>
                 </div>
               </div>

@@ -15,9 +15,24 @@
 
 import { fireEvent, render, within } from '@testing-library/react'
 
-jest.mock('@/contexts/RoleContext', () => ({
-  useRole: () => ({ user: { name: 'Test Admin', email: 'admin@example.org', role: 'admin' } }),
-}))
+// An admin, built out of the real role model rather than a hand-written stub.
+// The nav now asks two independent questions — is the module on, and does this
+// principal pass — and only the first belongs to these files. Running the
+// second through `lib/roles.ts` keeps a role regression failing in the role
+// tests instead of showing up here as a module flag that looks broken.
+jest.mock('@/contexts/RoleContext', () => {
+  const roles = jest.requireActual('@/lib/roles')
+  const principal = { role: 'admin' as const, capabilities: [] as never[] }
+  return {
+    useRole: () => ({
+      user: { name: 'Test Admin', email: 'admin@example.org', ...principal },
+      principal,
+      isAuthenticated: true,
+      hasRole: (minimum: 'member' | 'executive' | 'admin') => roles.hasRole(principal, minimum),
+      can: (capability: never) => roles.can(principal, capability),
+    }),
+  }
+})
 
 jest.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ logout: jest.fn() }),

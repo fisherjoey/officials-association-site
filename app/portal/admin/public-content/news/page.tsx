@@ -12,7 +12,7 @@ import { getFieldError } from '@/lib/portalValidation'
 import type { PublicNewsItem } from '@/types/publicContent'
 
 export default function PublicNewsAdmin() {
-  const { user } = useRole()
+  const { user, hasRole } = useRole()
   const { success, error, warning, info } = useToast()
   const [newsItems, setNewsItems] = useState<PublicNewsItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -48,7 +48,7 @@ export default function PublicNewsAdmin() {
   })
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   // Load news items from API
   useEffect(() => {

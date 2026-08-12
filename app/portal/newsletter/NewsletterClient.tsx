@@ -41,7 +41,7 @@ interface NewsletterClientProps {
 }
 
 export default function NewsletterClient({ newsletters: initialNewsletters }: NewsletterClientProps) {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const { success, error } = useToast()
   const [newsletters, setNewsletters] = useState<Newsletter[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -61,7 +61,7 @@ export default function NewsletterClient({ newsletters: initialNewsletters }: Ne
   const [sortBy] = useState<'title' | 'date'>('date')
   const [sortOrder] = useState<'asc' | 'desc'>('desc')
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   // Load newsletters from API
   useEffect(() => {

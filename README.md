@@ -173,15 +173,14 @@ tables. The shape is:
 
 `members`. You can read and update your own row. Admins and executives can read and update
 everyone's. A trigger stops an unprivileged PostgREST session from setting or changing its
-own `role` or `user_id`, even on its own row.
+own `role`, `capabilities` or `user_id`, even on its own row.
 
-`evaluations`. You can read the evaluations written about you. Admins and executives can
-read all of them and are the only ones who can write. That is the SQL layer. The function
-layer is looser and it is the one the portal goes through: `netlify/functions/evaluations.ts`
-also admits `evaluator` to read every evaluation and to create one, and lets an evaluator
-edit an evaluation they wrote. The functions hold the service-role key, so no policy below
-them applies. See [Documented assumptions](#documented-assumptions) on the roles that exist
-only in the function layer.
+`evaluations`. You can read the evaluations written about you. Admins, executives and anyone
+holding the `evaluator` capability can read all of them. Admins, executives and evaluators can
+write one; only admins and executives can edit or delete. `netlify/functions/evaluations.ts`
+applies the same rule before a request reaches the database, and adds one thing a policy
+cannot express: an evaluator may edit an evaluation they authored, which needs the author
+joined back to the caller.
 
 Public content (`public_news`, `public_training_events`, `public_resources`,
 `public_pages`). Anyone can read the active rows, anonymous visitors included, because the
@@ -189,9 +188,51 @@ public site reads them straight from the browser. Admins and executives write.
 
 Everything else is service-role only and reachable through the functions.
 
-`public.is_admin(uid)` and `public.is_admin_or_executive(uid)` are the single place the
-policies ask whether a caller is privileged. They are the seam to change when your role
-model grows.
+`public.structural_role(uid)` is the only function in the schema that reads `members.role`.
+`public.is_admin(uid)` and `public.is_admin_or_executive(uid)` are thin wrappers over it, and
+`public.has_capability(uid, cap)` answers the capability half. Those four are where the
+policies ask who is calling.
+
+### The role model
+
+Two questions, deliberately kept in two columns.
+
+**Structural role** is where someone sits: `member` < `executive` < `admin`. Ordered, one per
+person.
+
+**Capabilities** are what someone does: `evaluator`, `scheduler`, `instructor`, `assignor`,
+`mentor`. Unordered, any number at once, independent of the ladder. A member can be an
+evaluator. So can an executive.
+
+Collapsing the two is what kept `evaluator` out of the database for so long. One ordered field
+cannot say "a member, but also an evaluator" without inventing a rung for every combination,
+and every new rung multiplies through every policy in the schema. Split apart, the policy is
+one line: `has_capability(auth.uid(), 'evaluator')`.
+
+`lib/roles.ts` is the definition. The UI, the Netlify Functions and the tests import from it,
+and `__tests__/unit/config/roles.test.ts` reads
+`supabase/migrations/20260810001500_role_model.sql` off disk and fails when the file and the
+schema stop agreeing. That test is doing the real work here. The bug was never a missing
+check; it was one idea written down in three places that could drift apart.
+
+Two things you can change without writing SQL. Labels come from `NEXT_PUBLIC_ROLE_LABEL_*` and
+`NEXT_PUBLIC_CAPABILITY_LABEL_*`, and nothing in SQL reads them, so calling your executives
+"the board" is one line in `.env`. The capability list itself lives in `lib/roles.ts`: the
+database constrains the shape of `members.capabilities` (lowercase identifiers, no duplicates)
+and never its contents, and `has_capability()` compares whatever string it is handed, so
+adding or renaming one needs no migration.
+
+There is one exception, worth knowing before you rename anything. `evaluator` is written into
+an RLS policy by hand, because a policy has to name the capability it is testing. Rename that
+slug and the migration needs the new name too. The config test fails and says so rather than
+letting the policy quietly stop matching.
+
+The structural ladder is enumerated by a CHECK constraint, so renaming one of those three is a
+migration. They are the org chart, so that should be rare.
+
+`official` was the old name for `member`. It is still accepted on the way in, so an auth user
+carrying `app_metadata.role = 'official'` resolves to a member, but it is no longer a value
+the database will store.
 
 ### Auth configuration
 
@@ -207,9 +248,10 @@ Turn off self-service signup, unless you have read [Known gaps](#known-gaps) and
 role-resolution hole. With signup on, anyone can create an account and then grant themselves
 admin.
 
-Roles live in the auth user's `app_metadata.role` (`official`, `executive`, `admin`,
-`evaluator`, `mentor`) and are mirrored onto `members.role`. Only the service role can write
-`app_metadata`.
+Roles live in the auth user's `app_metadata` and are mirrored onto the roster row.
+`app_metadata.role` is the structural rung (`member`, `executive`, `admin`) and
+`app_metadata.capabilities` is an array of grants (`evaluator`, `scheduler`, `instructor`,
+`assignor`, `mentor`). Only the service role can write `app_metadata`.
 
 ---
 
@@ -550,15 +592,20 @@ member roster (names, emails, phone numbers, addresses, emergency contacts), eve
 evaluation, every contact submission and the system logs.
 
 Row-level security is not the hole. The policies in `supabase/migrations/` are written
-against `members.role`, which a user cannot change, and they hold: a plain official querying
-PostgREST directly sees only their own member row and their own evaluations. The hole is
-that the functions run with the service-role key, RLS never applies to them, and their own
-role check is the only thing standing there.
+against `members.role` and `members.capabilities`, neither of which a user can change, and
+they hold: a plain member querying PostgREST directly sees only their own member row and
+their own evaluations. The hole is that the functions run with the service-role key, RLS
+never applies to them, and their own role check is the only thing standing there.
+
+Capabilities are narrower than the rung is. `getPrincipal()` reads `app_metadata.capabilities`
+and never the `user_metadata` copy, so this trick cannot hand an account the `evaluator`
+grant. It can still make an account an admin, which is worse, so that is no comfort.
 
 Until it is fixed, turn off self-service signup in Supabase Auth and set
 `app_metadata.role` on every user through the service role. The fix itself is to stop
-reading `user_metadata` in `getUserRole()`, both in `netlify/functions/_shared/handler.ts`
-and in `contexts/AuthContext.tsx`, which carries the same fallback. Tracked as PLAT-33.
+reading `user_metadata` for the structural role, in `getPrincipal()` in
+`netlify/functions/_shared/handler.ts` and in `contexts/AuthContext.tsx`, which carries the
+same fallback. Tracked as PLAT-33.
 
 ### Supabase Storage ships with no policy layer
 
@@ -649,9 +696,10 @@ whose real inbox you would rather not have derived.
 value in `lib/siteConfig.ts` is non-empty and vanishes when it is not. There is no flag
 registry and no per-member entitlement.
 
-**Roles are a fixed list**: `official`, `executive`, `admin`, `evaluator`, `mentor`, with
-capability checks written inline in each function. `evaluator` and `mentor` have no SQL
-grants of their own and exist only in the function layer.
+**Roles are two lists, not one.** The structural ladder (`member`, `executive`, `admin`) is
+enumerated in the schema. Capabilities (`evaluator`, `scheduler`, `instructor`, `assignor`,
+`mentor`) are a config list the database does not enumerate. Both are defined in
+`lib/roles.ts`. See [The role model](#the-role-model).
 
 ---
 

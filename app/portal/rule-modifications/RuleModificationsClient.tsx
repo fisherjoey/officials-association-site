@@ -39,7 +39,7 @@ interface RuleModificationsClientProps {
 }
 
 export default function RuleModificationsClient({ modifications: initialModifications, categories: initialCategories }: RuleModificationsClientProps) {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const { success, error, warning, info } = useToast()
   const [modifications, setModifications] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -63,7 +63,7 @@ export default function RuleModificationsClient({ modifications: initialModifica
   })
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   // Load rule modifications from API
   useEffect(() => {

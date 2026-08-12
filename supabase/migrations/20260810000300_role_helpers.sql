@@ -6,6 +6,13 @@
 -- `members.role` directly, so this file is the single place to change when the
 -- role model grows capability flags.
 --
+-- It has since grown them. 0015 adds `has_capability(uid, cap)` alongside these
+-- two and re-expresses both of them over a new `structural_role(uid)`, which
+-- becomes the only function in the schema that reads the column. Their names,
+-- signatures and meanings are unchanged — every policy from 0004 onwards calls
+-- them and keeps working — so this file stays as the place they are introduced
+-- and 0015 is the place they are widened. Read both.
+--
 -- SECURITY DEFINER is load-bearing: policies on `members` have to consult
 -- `members` to answer the question, and a plain function would recurse into the
 -- very policy that called it. `SET search_path = public` pins name resolution so

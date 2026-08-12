@@ -1,4 +1,5 @@
 import { createHandler, supabase, errorResponse } from './_shared/handler'
+import { principalInAudienceGroup, toPrincipal } from '../../lib/roles'
 import { generateEmailTemplate } from '../../lib/emailTemplate'
 import { recordBulkEmail } from '../../lib/emailHistory'
 import {
@@ -90,11 +91,11 @@ async function getRecipientEmails(
   // column on the table. Whole bulk-email feature was silently broken
   // before this aliasing was added.
   const PAGE = 1000
-  const members: Array<{ email: string | null, role: string | null, certification_level: string | null, member_rank: number | null }> = []
+  const members: Array<{ email: string | null, role: string | null, capabilities: string[] | null, certification_level: string | null, member_rank: number | null }> = []
   for (let start = 0; ; start += PAGE) {
     const { data, error } = await supabase
       .from('members')
-      .select('email, role, certification_level, member_rank:rank')
+      .select('email, role, capabilities, certification_level, member_rank:rank')
       .range(start, start + PAGE - 1)
     if (error) {
       console.error('Failed to fetch members:', error.message)
@@ -110,13 +111,14 @@ async function getRecipientEmails(
 
     let shouldInclude = false
 
+    // Group membership comes from lib/roles so this resolver and the picker in
+    // app/portal/mail/page.tsx cannot disagree about who "the evaluators" are.
+    // They were two hand-written ladders of `member.role === …` before, which
+    // is how a capability group could exist in the UI and address nobody.
+    const principal = toPrincipal({ role: member.role, capabilities: member.capabilities })
+
     for (const group of recipientGroups) {
-      if (group === 'all') { shouldInclude = true; break }
-      if (group === 'officials' && member.role === 'official') { shouldInclude = true; break }
-      if (group === 'executives' && member.role === 'executive') { shouldInclude = true; break }
-      if (group === 'admins' && member.role === 'admin') { shouldInclude = true; break }
-      if (group === 'evaluators' && member.role === 'evaluator') { shouldInclude = true; break }
-      if (group === 'mentors' && member.role === 'mentor') { shouldInclude = true; break }
+      if (principalInAudienceGroup(principal, group)) { shouldInclude = true; break }
       if (group.startsWith('level') && member.certification_level) {
         const levelNum = group.replace('level', '')
         if (member.certification_level.includes(levelNum)) { shouldInclude = true; break }

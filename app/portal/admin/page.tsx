@@ -21,13 +21,14 @@ import { isRouteEnabled, PORTAL_FEATURES, SERVICE_REQUESTS_NAME } from '@/lib/si
 
 export default function PortalAdmin() {
   const router = useRouter()
-  const { user } = useRole()
+  const { hasRole } = useRole()
+  const isPrivileged = hasRole('executive')
 
   useEffect(() => {
-    if (user.role !== 'admin' && user.role !== 'executive') {
+    if (!isPrivileged) {
       router.push('/portal')
     }
-  }, [user.role, router])
+  }, [isPrivileged, router])
 
   const allAdminSections: {
     title: string

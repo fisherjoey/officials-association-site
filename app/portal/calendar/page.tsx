@@ -92,7 +92,7 @@ const eventTypeColors: Record<string, string> = {
 }
 
 export default function CalendarPage() {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const [calendarMode, setCalendarMode] = useState<CalendarViewMode>('events')
   const [events, setEvents] = useState<PortalEvent[]>([])
   const [showEventModal, setShowEventModal] = useState(false)
@@ -163,7 +163,7 @@ export default function CalendarPage() {
     }
   }
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   const toggleType = (type: string) => {
     setActiveTypes(prev => {

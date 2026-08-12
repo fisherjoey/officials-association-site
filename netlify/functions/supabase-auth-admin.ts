@@ -1,6 +1,7 @@
 import { Handler } from '@netlify/functions'
 import { supabase as supabaseAdmin, getCorsHeaders, listAllAuthUsers, findAuthUserByEmail, errorResponse } from './_shared/handler'
 import { checkRateLimit, getClientIp } from './_shared/rateLimit'
+import { DEFAULT_STRUCTURAL_ROLE } from '../../lib/roles'
 import { randomBytes } from 'crypto'
 import { Logger } from '../../lib/logger'
 import { recordInviteEmail, recordPasswordResetEmail } from '../../lib/emailHistory'
@@ -53,7 +54,7 @@ async function createInviteToken(
       token,
       email: email.toLowerCase(),
       name,
-      role: role || 'official',
+      role: role || DEFAULT_STRUCTURAL_ROLE,
       created_by: createdBy
     })
 
@@ -302,7 +303,7 @@ export const handler: Handler = async (event) => {
         const inviteToken = await createInviteToken(
           normalizedEmail,
           member.name,
-          member.role || 'official'
+          member.role || DEFAULT_STRUCTURAL_ROLE
         )
         const inviteUrl = getInviteUrl(inviteToken)
 
@@ -514,7 +515,7 @@ export const handler: Handler = async (event) => {
               const inviteToken = await createInviteToken(
                 member.email,
                 member.name,
-                member.role || 'official',
+                member.role || DEFAULT_STRUCTURAL_ROLE,
                 callerUser.id
               )
               const inviteUrl = getInviteUrl(inviteToken)
@@ -609,7 +610,7 @@ export const handler: Handler = async (event) => {
           const inviteToken = await createInviteToken(
             email,
             name,
-            role || 'official',
+            role || DEFAULT_STRUCTURAL_ROLE,
             callerUser.id
           )
           const inviteUrl = getInviteUrl(inviteToken)
@@ -640,7 +641,7 @@ export const handler: Handler = async (event) => {
             actorEmail: callerUser.email!,
             actorRole: callerRole,
             targetUserEmail: email,
-            newValues: { email, name, role: role || 'official' },
+            newValues: { email, name, role: role || DEFAULT_STRUCTURAL_ROLE },
             description: `Resent invite to ${email} (proxy token)`
           })
 
@@ -662,7 +663,7 @@ export const handler: Handler = async (event) => {
         // Send new invite with proxy token
         logger.info('auth', 'invite_user_start', `Inviting new user ${email}`, {
           userEmail: callerUser.email,
-          metadata: { targetEmail: email, name, role: role || 'official' }
+          metadata: { targetEmail: email, name, role: role || DEFAULT_STRUCTURAL_ROLE }
         })
 
         // First check if user already exists in auth
@@ -685,7 +686,7 @@ export const handler: Handler = async (event) => {
         const inviteToken = await createInviteToken(
           email,
           name,
-          role || 'official',
+          role || DEFAULT_STRUCTURAL_ROLE,
           callerUser.id
         )
         const inviteUrl = getInviteUrl(inviteToken)
@@ -716,7 +717,7 @@ export const handler: Handler = async (event) => {
           actorEmail: callerUser.email!,
           actorRole: callerRole,
           targetUserEmail: email,
-          newValues: { email, name, role: role || 'official' },
+          newValues: { email, name, role: role || DEFAULT_STRUCTURAL_ROLE },
           description: `Invited new user ${email} (proxy token)`
         })
 

@@ -13,7 +13,7 @@ import type { PublicPage } from '@/types/publicContent'
 import { ORG_SHORT_NAME } from '@/lib/siteConfig'
 
 export default function PublicPagesAdmin() {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const { success, error, warning, info } = useToast()
   const [pages, setPages] = useState<PublicPage[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -26,7 +26,7 @@ export default function PublicPagesAdmin() {
   const [expandedPages, setExpandedPages] = useState<Set<string>>(new Set())
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   // Load pages from API
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { Handler } from '@netlify/functions'
 import busboy from 'busboy'
-import { supabase, getUserRole, errorResponse } from './_shared/handler'
+import { supabase, getPrincipal, errorResponse } from './_shared/handler'
+import { hasRole } from '../../lib/roles'
 import { Logger } from '../../lib/logger'
 import { SITE_URL } from '../../lib/siteConfig'
 
@@ -45,9 +46,10 @@ export const handler: Handler = async (event): Promise<{ statusCode: number; hea
     return errorResponse({ code: 'unauthorized', headers })
   }
 
-  const userRole = getUserRole(authUser)
+  const principal = getPrincipal(authUser)
+  const userRole = principal.role
   const userEmail = authUser.email || 'unknown'
-  const isPrivileged = userRole === 'admin' || userRole === 'executive'
+  const isPrivileged = hasRole(principal, 'executive')
 
   return new Promise((resolve) => {
     let bb: ReturnType<typeof busboy>

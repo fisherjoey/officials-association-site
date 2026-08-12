@@ -26,9 +26,10 @@ import LatestAnnouncementWidget from '@/components/dashboard/LatestAnnouncementW
 import LatestNewsletterWidget from '@/components/dashboard/LatestNewsletterWidget';
 import SchedulerUpdatesWidget from '@/components/dashboard/SchedulerUpdatesWidget';
 import { NEWSLETTER_NAME, EXTERNAL_LINKS, MODULES, isRouteEnabled } from '@/lib/siteConfig'
+import { describePrincipal } from '@/lib/roles'
 
 export default function PortalDashboard() {
-  const { user } = useRole();
+  const { user, principal, hasRole, can } = useRole();
 
   // Quick Links, as data rather than as a wall of near-identical <Link>s. The
   // colours differ per tile and nothing else does, so a list is what this is.
@@ -38,8 +39,16 @@ export default function PortalDashboard() {
     icon: React.ComponentType<{ className?: string }>
     iconWrapClass: string
     iconClass: string
-    staffOnly?: boolean
-    adminOnly?: boolean
+    /**
+     * Who is allowed to see the tile. Omitted means every signed-in member.
+     *
+     * A predicate rather than a staff/admin flag, because the answers do not
+     * all sit on one ladder. The roster is executive business; the evaluation
+     * library belongs to whoever holds the evaluator grant, at any rung. A
+     * single flag could only say "not an ordinary member", which is what
+     * conflated the two before `lib/roles.ts` split the rung from the grant.
+     */
+    allow?: () => boolean
   }[] = [
     { href: '/portal/profile', label: 'My Profile', icon: IconUser, iconWrapClass: 'bg-orange-50 dark:bg-portal-accent/10', iconClass: 'text-orange-600 dark:text-portal-accent' },
     { href: '/portal/resources', label: 'Resources', icon: IconBooks, iconWrapClass: 'bg-blue-50 dark:bg-blue-500/[0.06]', iconClass: 'text-blue-600 dark:text-blue-300/60' },
@@ -47,20 +56,23 @@ export default function PortalDashboard() {
     { href: '/portal/calendar', label: 'Calendar', icon: IconCalendar, iconWrapClass: 'bg-green-50 dark:bg-green-500/[0.06]', iconClass: 'text-green-600 dark:text-green-300/60' },
     { href: '/portal/newsletter', label: NEWSLETTER_NAME, icon: IconNotebook, iconWrapClass: 'bg-amber-50 dark:bg-amber-500/[0.06]', iconClass: 'text-amber-600 dark:text-amber-300/60' },
     { href: '/portal/rule-modifications', label: 'Rule Modifications', icon: IconGavel, iconWrapClass: 'bg-red-50 dark:bg-red-500/[0.06]', iconClass: 'text-red-600 dark:text-red-300/60' },
-    { href: '/portal/members', label: 'Members', icon: IconUsers, iconWrapClass: 'bg-indigo-50 dark:bg-indigo-500/[0.06]', iconClass: 'text-indigo-600 dark:text-indigo-300/60', staffOnly: true },
-    { href: '/portal/evaluations', label: 'Evaluations', icon: IconClipboard, iconWrapClass: 'bg-teal-50 dark:bg-teal-500/[0.06]', iconClass: 'text-teal-600 dark:text-teal-300/60', staffOnly: true },
-    { href: '/portal/admin', label: 'Portal Admin', icon: IconSettings, iconWrapClass: 'bg-slate-100 dark:bg-slate-700', iconClass: 'text-slate-600 dark:text-slate-400', adminOnly: true },
-    { href: '/portal/admin/logs', label: 'System Logs', icon: IconReportAnalytics, iconWrapClass: 'bg-slate-100 dark:bg-slate-700', iconClass: 'text-slate-600 dark:text-slate-400', adminOnly: true },
-    { href: '/portal/admin/email-history', label: 'Email History', icon: IconMail, iconWrapClass: 'bg-slate-100 dark:bg-slate-700', iconClass: 'text-slate-600 dark:text-slate-400', adminOnly: true },
+    { href: '/portal/members', label: 'Members', icon: IconUsers, iconWrapClass: 'bg-indigo-50 dark:bg-indigo-500/[0.06]', iconClass: 'text-indigo-600 dark:text-indigo-300/60', allow: () => hasRole('executive') },
+    { href: '/portal/evaluations', label: 'Evaluations', icon: IconClipboard, iconWrapClass: 'bg-teal-50 dark:bg-teal-500/[0.06]', iconClass: 'text-teal-600 dark:text-teal-300/60', allow: () => hasRole('executive') || can('evaluator') },
+    { href: '/portal/admin', label: 'Portal Admin', icon: IconSettings, iconWrapClass: 'bg-slate-100 dark:bg-slate-700', iconClass: 'text-slate-600 dark:text-slate-400', allow: () => hasRole('admin') },
+    { href: '/portal/admin/logs', label: 'System Logs', icon: IconReportAnalytics, iconWrapClass: 'bg-slate-100 dark:bg-slate-700', iconClass: 'text-slate-600 dark:text-slate-400', allow: () => hasRole('admin') },
+    { href: '/portal/admin/email-history', label: 'Email History', icon: IconMail, iconWrapClass: 'bg-slate-100 dark:bg-slate-700', iconClass: 'text-slate-600 dark:text-slate-400', allow: () => hasRole('admin') },
   ];
 
-  // Two filters, and they answer different questions. Role decides who is
-  // allowed to see a link; isRouteEnabled decides whether the page behind it
-  // was built at all. A disabled module is absent from the static export, so a
-  // surviving link would be a silent 404 for everyone including admins.
+  // Two gates, and they answer different questions. `allow` decides who is
+  // permitted to see a link. isRouteEnabled decides whether the page behind it
+  // was built at all: a disabled module is absent from the static export, so a
+  // surviving link would be a silent 404 for everyone, admins included. Both
+  // have to pass.
+  //
+  // The role-shaped `sections` arrays that used to sit here were dead: nothing
+  // rendered them. The tiles below are the dashboard's only link list.
   const quickLinks = allQuickLinks
-    .filter(link => (link.adminOnly ? user.role === 'admin' : true))
-    .filter(link => (link.staffOnly ? user.role !== 'official' : true))
+    .filter(link => (link.allow ? link.allow() : true))
     .filter(link => isRouteEnabled(link.href));
 
   return (
@@ -72,16 +84,14 @@ export default function PortalDashboard() {
           <div>
             <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-brand-primary mb-0.5">Welcome back</p>
             <h1 className="font-heading text-lg sm:text-xl font-extrabold text-gray-900 dark:text-white tracking-tight">
-              {user.name}
+              {user?.name}
             </h1>
           </div>
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-semibold bg-orange-50 dark:bg-portal-accent/10 text-brand-primary border border-orange-200 dark:border-portal-accent/20">
             <span className="w-1.5 h-1.5 rounded-full bg-brand-primary" />
-            {user.role === 'admin' ? 'Administrator' :
-             user.role === 'executive' ? 'Executive Member' :
-             user.role === 'evaluator' ? 'Evaluator' :
-             user.role === 'mentor' ? 'Mentor' :
-             'Official'}
+            {/* Rung first, grants in parentheses: "Executive (Evaluator)".
+                The old ladder could only show one of the two. */}
+            {describePrincipal(principal)}
           </span>
         </div>
       </div>

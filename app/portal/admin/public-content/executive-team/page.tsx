@@ -10,7 +10,7 @@ import type { ExecutiveMember } from '@/types/publicContent'
 import { EMAIL_DOMAIN } from '@/lib/siteConfig'
 
 export default function ExecutiveTeamAdmin() {
-  const { user } = useRole()
+  const { hasRole } = useRole()
   const { success, error } = useToast()
   const [members, setMembers] = useState<ExecutiveMember[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -36,7 +36,7 @@ export default function ExecutiveTeamAdmin() {
     priority: 0
   })
 
-  const canEdit = user.role === 'admin' || user.role === 'executive'
+  const canEdit = hasRole('executive')
 
   useEffect(() => {
     loadMembers()

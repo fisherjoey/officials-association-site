@@ -1,4 +1,5 @@
 import { createHandler, findAuthUserByEmail, errorResponse } from './_shared/handler'
+import { hasRole, DEFAULT_STRUCTURAL_ROLE } from '../../lib/roles'
 import { sendEmail } from '../../lib/email'
 import {
   EMAIL_ANNOUNCEMENTS,
@@ -17,8 +18,8 @@ import {
 /**
  * Wire shape the PUT branch accepts. Caller MUST send `id`; everything
  * else is optional and patched onto the row. Privileged fields
- * (role/email/netlify_user_id/user_id/status/rank) are stripped from
- * non-admin callers — see the strip list in the PUT handler.
+ * (role/capabilities/email/netlify_user_id/user_id/status/rank) are stripped
+ * from non-admin callers — see the strip list in the PUT handler.
  */
 export interface MemberUpdatePayload {
   id: string
@@ -29,6 +30,7 @@ export interface MemberUpdatePayload {
   rank?: number
   status?: string
   role?: string
+  capabilities?: string[]
   address?: string
   city?: string
   province?: string
@@ -109,7 +111,8 @@ export const handler = createHandler({
     DELETE: 'admin',
   },
   handler: async ({ event, supabase, logger, user }) => {
-    const isAdmin = user!.role === 'admin' || user!.role === 'executive'
+    // "Privileged" here has always meant admin-or-executive, despite the name.
+    const isAdmin = hasRole(user!.principal, 'executive')
     const callerEmail = user!.email.toLowerCase()
     const callerId = user!.id
 
@@ -215,13 +218,24 @@ export const handler = createHandler({
           })
         }
 
-        // Non-admins can only create their own member row, and may not assign a role
+        // Non-admins can only create their own member row, may not assign
+        // anything but the default rung, and may not arrive holding capability
+        // grants. The last of those is new and matters: `capabilities` is what
+        // the RLS policies read, so a self-insert carrying `['evaluator']`
+        // would be a member granting themselves every evaluation in the
+        // association on the way in. The guard trigger in migration 0015 says
+        // the same thing at the database, but this function holds the
+        // service-role key and RLS never applies to it, so the check has to
+        // exist here too.
         if (!isAdmin) {
           if (email.toLowerCase() !== callerEmail) {
             return FORBIDDEN('Cannot create a member record for another user')
           }
-          if (role && role !== 'official') {
+          if (role && role !== DEFAULT_STRUCTURAL_ROLE) {
             return FORBIDDEN('Cannot assign a role')
+          }
+          if (Array.isArray(memberData.capabilities) && memberData.capabilities.length > 0) {
+            return FORBIDDEN('Cannot assign capabilities')
           }
           if (memberData.user_id && memberData.user_id !== callerId) {
             return FORBIDDEN('user_id must match the authenticated user')
@@ -272,7 +286,7 @@ export const handler = createHandler({
                 data: {
                   full_name: name,
                   name: name,
-                  role: role || 'official'
+                  role: role || DEFAULT_STRUCTURAL_ROLE
                 },
                 redirectTo: `${siteUrl}/auth/callback`
               }
@@ -316,7 +330,7 @@ export const handler = createHandler({
           ...memberData,
           email: email.toLowerCase(),
           name,
-          role: role || 'official',
+          role: role || DEFAULT_STRUCTURAL_ROLE,
           user_id: authUserId || (isAdmin ? null : callerId),
         }
 
@@ -331,7 +345,7 @@ export const handler = createHandler({
         await logger.audit('CREATE', 'member', data.id, {
           actorId: authUserId || callerId,
           actorEmail: callerEmail,
-          newValues: { email, name, role: role || 'official' },
+          newValues: { email, name, role: role || DEFAULT_STRUCTURAL_ROLE },
           description: `Created member ${email}`
         })
 
@@ -374,6 +388,13 @@ export const handler = createHandler({
             return FORBIDDEN()
           }
           delete updates.role
+          // `capabilities` is exactly as privileged as `role` — appending
+          // 'evaluator' to your own row opens every evaluation in the
+          // association through the RLS policy in migration 0015 — so it is
+          // stripped on the same line of reasoning. This function holds the
+          // service-role key, so the guard trigger that would otherwise catch
+          // it never fires here.
+          delete updates.capabilities
           delete updates.email
           delete updates.netlify_user_id
           // status and rank are admin-only fields. A non-admin must not
@@ -406,14 +427,23 @@ export const handler = createHandler({
 
         if (error) throw error
 
-        // If role was updated, sync to Supabase Auth user metadata
-        if (updates.role && data.user_id) {
+        // If role or capabilities changed, mirror them onto the auth user's
+        // app_metadata. The function layer resolves a caller's principal from
+        // that metadata while the RLS policies read the roster row, so a
+        // roster change that is not mirrored leaves the two layers disagreeing
+        // — the database would let an evaluator read and the function would
+        // not. `updateUserById` merges at the top level of app_metadata, so
+        // sending one key does not clear the other.
+        if ((updates.role || updates.capabilities) && data.user_id) {
+          const appMetadata: Record<string, unknown> = {}
+          if (updates.role) appMetadata.role = updates.role
+          if (updates.capabilities) appMetadata.capabilities = updates.capabilities
           try {
             await supabase.auth.admin.updateUserById(data.user_id, {
-              app_metadata: { role: updates.role }
+              app_metadata: appMetadata
             })
             logger.info('crud', 'role_sync_success', `Synced role to auth for user ${data.user_id}`, {
-              metadata: { userId: data.user_id, newRole: updates.role }
+              metadata: { userId: data.user_id, newRole: updates.role, newCapabilities: updates.capabilities }
             })
           } catch (authError) {
             logger.error('crud', 'role_sync_failed', `Failed to sync role to auth for user ${data.user_id}`, authError instanceof Error ? authError : new Error(String(authError)))

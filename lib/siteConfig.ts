@@ -530,6 +530,56 @@ export const enabledModulePageExtensions = (): string[] =>
   PORTAL_MODULES.filter((mod) => MODULES[mod.key]).map((mod) => modulePageExtension(mod.key))
 
 // ---------------------------------------------------------------------------
+// Roles
+// ---------------------------------------------------------------------------
+
+/**
+ * The role model is defined in `lib/roles.ts` and re-exported here, because
+ * this file is the one an adopter is told to open and roles are one of the
+ * things they will want to change.
+ *
+ * The dependency runs one way — `siteConfig` imports `roles`, never the reverse
+ * — so the predicates stay usable from `netlify/functions/**` without dragging
+ * the branding module's environment reads along, and so a future import cycle
+ * cannot form.
+ *
+ * What is safely changeable, in decreasing order of ease:
+ *
+ *  - **Labels**, via `NEXT_PUBLIC_ROLE_LABEL_*` and
+ *    `NEXT_PUBLIC_CAPABILITY_LABEL_*`. Nothing in SQL reads them. Calling your
+ *    executives "the board" is one line in `.env`.
+ *  - **The capability list**, in `lib/roles.ts`. The database constrains the
+ *    shape of `members.capabilities` and not its contents, and
+ *    `has_capability()` is generic, so adding or renaming a capability needs no
+ *    migration — with one exception, `evaluator`, which an RLS policy names
+ *    directly. `__tests__/unit/config/roles.test.ts` fails if that pairing
+ *    breaks.
+ *  - **The structural ladder**, which is enumerated by a CHECK constraint in
+ *    `supabase/migrations/20260810001500_role_model.sql`. Changing those three
+ *    names is a migration, and the same test holds the two lists together.
+ */
+export {
+  STRUCTURAL_ROLES,
+  STRUCTURAL_ROLE_LABELS,
+  DEFAULT_STRUCTURAL_ROLE,
+  CAPABILITIES,
+  CAPABILITY_LABELS,
+  can,
+  hasRole,
+  isAdmin,
+  isAdminOrExecutive,
+  canViewAllEvaluations,
+  toPrincipal,
+  describeRole,
+  describePrincipal,
+  type StructuralRole,
+  type Capability,
+  type Principal,
+} from './roles'
+
+import { roleModel } from './roles'
+
+// ---------------------------------------------------------------------------
 // Derived helpers
 // ---------------------------------------------------------------------------
 
@@ -607,6 +657,8 @@ export const siteConfig = {
   },
   features: PORTAL_FEATURES,
   modules: MODULES,
+  /** Structural ladder, capability list and their labels. See `lib/roles.ts`. */
+  roles: roleModel,
   newsletterName: NEWSLETTER_NAME,
   serviceRequestsName: SERVICE_REQUESTS_NAME,
   defaultAuthor: DEFAULT_AUTHOR,
