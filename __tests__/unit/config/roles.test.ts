@@ -281,6 +281,33 @@ describe('the migration and lib/roles.ts agree', () => {
     )
   })
 
+  it('names no capability anywhere else in the chain either', () => {
+    // The test above reads one file, because when it was written one file
+    // called `has_capability()`. 0016 added a second — the shared predicate
+    // both the evaluations row policy and the evaluations storage policy sit
+    // on — and it calls the helper on a `uid` argument rather than on
+    // `auth.uid()` directly, so the narrower pattern above cannot see it.
+    //
+    // Scan the whole chain instead. A slug written into any migration is a slug
+    // a rename has to reach, and this is the test that will say where.
+    const dir = path.dirname(MIGRATION_PATH)
+    const slugsInSql = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith('.sql'))
+      .flatMap((f) =>
+        Array.from(
+          fs
+            .readFileSync(path.join(dir, f), 'utf8')
+            .matchAll(/has_capability\(\s*[^,()]*(?:\(\))?\s*,\s*'([a-z_]+)'\s*\)/g)
+        ).map((m) => m[1])
+      )
+
+    expect(slugsInSql.length).toBeGreaterThan(0)
+    expect(Array.from(new Set(slugsInSql)).sort()).toEqual(
+      [...CAPABILITIES_ENFORCED_IN_SQL].sort()
+    )
+  })
+
   it('keeps the capability list out of the schema, so renames stay free', () => {
     // The shape constraint must not enumerate capabilities. If someone adds a
     // membership test here, "rename a capability in config" stops being true

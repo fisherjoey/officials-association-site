@@ -162,9 +162,10 @@ run a local database or to regenerate the screenshots.
 
 ### Migrations
 
-`supabase/migrations/` holds fourteen files that build the whole schema: members, roles and
+`supabase/migrations/` holds sixteen files that build the whole schema: members, roles and
 their RLS policies, portal content, evaluations, public content, invite tokens, email
-history, logging, submissions, season stats, and the storage buckets with their policies.
+history, logging, submissions, season stats, the storage buckets with their policies, and the
+rule that keeps an evaluation's row and its file saying the same thing.
 
 ```bash
 npx supabase link --project-ref <your-project-ref>
@@ -201,7 +202,7 @@ not need to create anything in the dashboard.
 | `portal-resources` | no | any signed-in member | any signed-in member, but only the uploader or an admin or executive can change or remove an item |
 | `newsletters` | no | any signed-in member | admin, executive |
 | `training-materials` | no | any signed-in member | admin, executive |
-| `evaluations` | no | whoever uploaded the file, plus admins and executives | any signed-in member |
+| `evaluations` | no | whoever can read the evaluation row that points at the file (the official it is about, admins, executives, and anyone holding the evaluator capability), plus whoever uploaded it | any signed-in member |
 
 `email-images` is public because those images are embedded in outgoing mail and the person
 reading that mail in Gmail has no Supabase session. Public means anyone holding an object URL
@@ -213,6 +214,16 @@ Every privilege check calls `public.is_admin_or_executive()`, the same helper th
 policies use, so storage and rows cannot drift apart when the role model changes. The
 reasoning behind each bucket is written out at the top of
 `supabase/migrations/20260810001400_storage_policies.sql`. Read that before you change one.
+
+The `evaluations` bucket needs a second question answered. A member may read the file when
+they may read the evaluation row that points at it, and that is a rule about the row rather
+than about the object. Object keys say nothing about who a report is about, but the reference
+runs the other way: `evaluations.file_url` holds `storage://evaluations/<key>`, so a policy on
+`storage.objects` can start from `name` and find the row. Both policies then sit on one
+predicate, `public.can_read_evaluation()` in
+`supabase/migrations/20260810001600_evaluation_object_access.sql`. Change who may read a report
+and the file follows, with nobody having to remember the bucket. An object with no row behind
+it stays owner-only, which is the state of every upload in the moment before its row exists.
 
 The migration is also what decides whether a bucket is public. Flip `portal-resources` to
 public in the dashboard and the next `db push` flips it back. Change the migration instead.
@@ -255,6 +266,12 @@ string back to anything that asks again, so a viewer re-rendering three times co
 trip rather than three. It stops reusing a link thirty seconds before the token dies, so a
 download never starts against a URL that expires mid-transfer.
 
+That memo is keyed to whoever minted the link, and it has to be. A signed URL is a bearer
+token, `logout()` signs out without reloading the page, and the module holding the memo lives
+on into the next session. On a shared machine, a cache keyed on the file alone would hand the
+second member a working link minted for the first. The key carries the acting session instead,
+and signing out empties the memo as well.
+
 Embeds are the case that has to be handled rather than asserted. A viewer signs once when it
 opens. That is fine for an `<img>` or a PDF, which have finished fetching long before the
 token dies, and not fine for `<video>` or `<audio>`, which go on issuing range requests as
@@ -285,7 +302,8 @@ every roster write goes through a function holding the service-role key. A trigg
 second barrier, stopping an unprivileged session from setting or changing its own `role`,
 `capabilities` or `user_id` on the day someone re-grants UPDATE.
 
-`evaluations`. You can read the evaluations written about you. Admins, executives and anyone
+`evaluations`. You can read the evaluations written about you, attachment included. Admins,
+executives and anyone
 holding the `evaluator` capability can read all of them. Admins, executives and evaluators can
 write one; only admins and executives can edit or delete. `netlify/functions/evaluations.ts`
 applies the same rule before a request reaches the database, and adds one thing a policy
@@ -721,32 +739,6 @@ reading `user_metadata` for `role` and `roles`, in `getPrincipal()` in
 `netlify/functions/_shared/handler.ts` and in `contexts/AuthContext.tsx`, which carries the
 same fallback. Both fields feed the rung and the capability grants, so dropping the fallback
 closes both. Tracked as PLAT-33.
-
-### Evaluation attachments only open for the member who uploaded them
-
-The `evaluations` table and the `evaluations` bucket disagree about who may read a report, and
-the portal shows a download button to everyone the table lets in.
-
-`evaluations_select_capability_or_subject` (migration 0015) gives the row to the official the
-evaluation is about, to admins and executives, and to anyone holding the `evaluator`
-capability. `evaluations_select_owner_or_admin` on `storage.objects` (migration 0014, written
-before capabilities existed) gives the object to whoever uploaded it, plus admins and
-executives. So two people see a row with a download button on it and get "We couldn’t open that
-file" when they press it: the official the report is about, and any evaluator other than the
-one who wrote it. The second is the more common of the two, since reading a colleague's
-report is most of what the evaluator capability is for.
-
-The two halves want different fixes. The evaluator half is one line of SQL now that 0015 has
-put `has_capability(auth.uid(), 'evaluator')` within reach of a policy, which is what 0014's
-header said it was waiting for. It also widens read access to every evaluation file in the
-association, so it is a change to make on purpose rather than in passing. The subject half
-cannot be written at all while object keys say nothing about who the evaluation is about; that
-wants a `<member_uuid>/<file>` convention the upload path writes first, and a policy that reads
-the member id back out of the key. Until both land, an official and a second evaluator get the
-report from the evaluator who wrote it rather than from the portal.
-
-`__tests__/integration/signed-downloads.test.ts` pins both refusals as they currently stand, so
-closing either one fails the test that says it is still open and points back here.
 
 ### `access_level` on a resource gates the row, not the file
 

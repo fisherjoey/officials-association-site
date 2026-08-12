@@ -272,19 +272,23 @@ describe('a member who is not allowed to read the object', () => {
 })
 
 /**
- * The table and the bucket disagree, and the portal renders a download button
- * from the table's answer. `evaluations_select_capability_or_subject` (0015)
- * grants the ROW to the subject, to admin/executive and to anyone holding the
- * `evaluator` capability. `evaluations_select_owner_or_admin` (0014, written
- * before capabilities existed) grants the OBJECT to the uploader plus
- * admin/executive. Two of those readers therefore see a button that cannot
- * work.
+ * The table and the bucket used to disagree, and the portal renders its
+ * download button from the table's answer.
+ * `evaluations_select_capability_or_subject` grants the ROW to the subject, to
+ * admin/executive and to anyone holding the `evaluator` capability;
+ * `evaluations_select_owner_or_admin` (0014) granted the OBJECT only to the
+ * uploader plus admin/executive, so two of those readers saw a button that
+ * could not work.
  *
- * These tests pin the gap rather than the fix, which is why they assert a
- * refusal for a member the application says should be allowed. Both are
- * written up under "Evaluation attachments only open for the member who
- * uploaded them" in the README; closing either half fails the matching test
- * here, which is the point of pinning it.
+ * 0016 closes it by making both policies call one predicate,
+ * `public.can_read_evaluation()`, and giving the object policy a way to reach
+ * it: `evaluations.file_url` already holds `storage://evaluations/<key>`, so a
+ * policy on `storage.objects` can follow that reference backwards from `name`.
+ *
+ * What these tests are for is the sentence in the README that replaced the
+ * known gap: whoever can see the row can open the file, and whoever cannot see
+ * the row cannot. Both halves are asserted by fetching the URL, because a mint
+ * that succeeds and a fetch that 403s would be a fix that is not one.
  */
 describe('an evaluation attachment', () => {
   let ref: string
@@ -311,7 +315,20 @@ describe('an evaluation attachment', () => {
     expect((await fetch(url)).status).toBe(200)
   })
 
-  it('is listed for a second evaluator, who then cannot open it', async () => {
+  it('opens for the official it is about', async () => {
+    // The row the portal renders the button from.
+    const { data, error: rowError } = await m1C.from('evaluations').select('id').eq('file_url', ref)
+    expect(rowError).toBeNull()
+    expect(data).toHaveLength(1)
+
+    const url = await resolveFileUrl(ref, { client: m1C })
+    expect(url).toContain('/object/sign/evaluations/')
+    const res = await fetch(url)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('the report')
+  })
+
+  it('opens for a second evaluator, who did not upload it', async () => {
     // The capability the application checks before rendering the button.
     expect(canViewAllEvaluations(toPrincipal({ role: 'member', capabilities: ev2.capabilities })))
       .toBe(true)
@@ -320,22 +337,65 @@ describe('an evaluation attachment', () => {
     expect(rowError).toBeNull()
     expect(data).toHaveLength(1)
 
-    await expect(resolveFileUrl(ref, { client: ev2C })).rejects.toThrow(/couldn’t open that file/)
+    const url = await resolveFileUrl(ref, { client: ev2C })
+    const res = await fetch(url)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('the report')
   })
 
-  it('is listed for the official it is about, who then cannot open it either', async () => {
-    const { data, error: rowError } = await m1C.from('evaluations').select('id').eq('file_url', ref)
-    expect(rowError).toBeNull()
-    expect(data).toHaveLength(1)
-
-    await expect(resolveFileUrl(ref, { client: m1C })).rejects.toThrow(/couldn’t open that file/)
+  it('saves under the name the portal asks for, for the subject too', async () => {
+    const url = await resolveFileUrl(ref, { client: m1C, download: 'My Evaluation.txt' })
+    const res = await fetch(url)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-disposition')).toContain('attachment')
+    expect(res.headers.get('content-disposition')).toContain('My%20Evaluation.txt')
+    expect(await res.text()).toBe('the report')
   })
 
-  it('is not listed at all for a member with neither the capability nor the row', async () => {
+  it('is not listed, and does not open, for a member with no claim to the row', async () => {
     const { data } = await m2C.from('evaluations').select('id').eq('file_url', ref)
     expect(data).toHaveLength(0)
 
+    // Refused at mint time, which is where it has to be refused: there is no
+    // URL to hand out and nothing for the portal to follow.
     await expect(resolveFileUrl(ref, { client: m2C })).rejects.toThrow(/couldn’t open that file/)
+  })
+
+  it('resolves for the subject through a row still holding the old public URL', async () => {
+    // An adopter who ran the portal before signed downloads landed has rows
+    // whose file_url is a `/object/public/…` link. `evaluation_object_key()`
+    // reads the key back out of that shape too, so the subject reaches those
+    // files without anything being rewritten in the database.
+    const legacyPath = key('legacy-report.txt')
+    expect((await uploadAs(ev1C, 'evaluations', legacyPath, 'the legacy report')).error).toBeNull()
+    const { data: legacy } = ev1C.storage.from('evaluations').getPublicUrl(legacyPath)
+    await seedEvaluation(m1, ev1, legacy.publicUrl, 'legacy-report.txt')
+
+    const url = await resolveFileUrl(legacy.publicUrl, { client: m1C })
+    expect(url).toContain('/object/sign/evaluations/')
+    const res = await fetch(url)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('the legacy report')
+  })
+
+  it('stays owner-only while no evaluation row points at it', async () => {
+    // The window between the upload and the row, and the resting state of any
+    // stray object a member drops in the bucket. 0014's guarantee — a member
+    // who uploads can only ever read back what they uploaded — is what this is.
+    const stray = key('stray.txt')
+    expect((await uploadAs(m2C, 'evaluations', stray, 'no row points here')).error).toBeNull()
+    const strayRef = toStorageRef('evaluations', stray)
+
+    expect(await resolveFileUrl(strayRef, { client: m2C })).toContain('/object/sign/evaluations/')
+    clearSignedUrlCache()
+    // Holding the evaluator capability is not a key to the bucket. It is a key
+    // to the evaluations, and this object is not one.
+    await expect(resolveFileUrl(strayRef, { client: ev2C })).rejects.toThrow(
+      /couldn’t open that file/
+    )
+    await expect(resolveFileUrl(strayRef, { client: m1C })).rejects.toThrow(
+      /couldn’t open that file/
+    )
   })
 })
 
@@ -438,4 +498,113 @@ describe('the memo', () => {
       /couldn’t open that file/
     )
   })
+})
+
+/**
+ * One tab, two members, no reload.
+ *
+ * `logout()` in `contexts/AuthContext.tsx` calls `supabase.auth.signOut()` and
+ * navigates nowhere. The SPA stays mounted, the browser-client singleton
+ * survives, and so does the module-level memo in `lib/fileDownload.ts`. On a
+ * shared rink or office machine the next member signs in on top of that, which
+ * is the sequence driven below — not reasoned about, driven: one client object
+ * with its own session storage, a real sign-out and a real sign-in between the
+ * two downloads.
+ *
+ * The memo used to key on bucket, path, disposition and TTL, all four of which
+ * the second member's click matches exactly. So the second member hit the first
+ * member's slot and was handed a live link to a file storage would have refused
+ * them.
+ */
+describe('the memo across a sign-out and a sign-in in the same tab', () => {
+  let ref: string
+
+  beforeAll(async () => {
+    const path = key('handover.txt')
+    expect((await uploadAs(ev1C, 'evaluations', path, 'the handover report')).error).toBeNull()
+    ref = toStorageRef('evaluations', path)
+    await seedEvaluation(m1, ev1, ref, 'handover.txt')
+  }, 60_000)
+
+  /**
+   * One browser tab: a client that keeps its session, in a store of its own,
+   * the way `createBrowserClient()` keeps one in the page. Everything else in
+   * this suite injects a bearer header and holds no session at all, which is a
+   * different shape and cannot express a logout.
+   */
+  function tabClient(): SupabaseClient {
+    const store = new Map<string, string>()
+    return createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+          storage: {
+            getItem: (k: string) => store.get(k) ?? null,
+            setItem: (k: string, v: string) => void store.set(k, v),
+            removeItem: (k: string) => void store.delete(k),
+          },
+        },
+      }
+    )
+  }
+
+  async function signIn(tab: SupabaseClient, user: TestUser): Promise<void> {
+    const { error } = await tab.auth.signInWithPassword({
+      email: user.email,
+      password: user.password,
+    })
+    if (error) throw new Error(`sign-in failed for ${user.role}: ${error.message}`)
+  }
+
+  it('hands the second member nothing the first member minted', async () => {
+    const tab = tabClient()
+
+    // The evaluator who wrote the report downloads it. Same options the portal
+    // sends, so this is the exact cache slot the next click would land in.
+    await signIn(tab, ev1)
+    const evaluatorUrl = await resolveFileUrl(ref, { client: tab, download: 'handover.txt' })
+    expect((await fetch(evaluatorUrl)).status).toBe(200)
+
+    // Logout as the portal does it: no reload, no navigation. The memo is still
+    // in memory with that link in it.
+    await tab.auth.signOut()
+    expect((await tab.auth.getSession()).data.session).toBeNull()
+
+    // A member with no claim to the row signs in on the same tab and presses
+    // the same button.
+    await signIn(tab, m2)
+    await expect(
+      resolveFileUrl(ref, { client: tab, download: 'handover.txt' })
+    ).rejects.toThrow(/couldn’t open that file/)
+
+    // And the link the first member got is still not reachable through any
+    // call this member can make — the refusal above is a refusal, not a
+    // different URL that happens to work.
+    await expect(resolveFileUrl(ref, { client: tab })).rejects.toThrow(/couldn’t open that file/)
+
+    // The subject signs in on the same tab and does get their own report, so
+    // what the middle member met was a scoped cache and not a jammed one.
+    //
+    // No assertion here that this URL differs from the evaluator's, and that is
+    // worth saying rather than leaving as an omission: a storage token signs
+    // `{url, scope, iat, exp}` and names nobody, so two members minting for the
+    // same object in the same second get the same string whether it came from
+    // the memo or from a fresh round trip. Comparing them proves nothing in
+    // either direction. What discriminates is the refusal above, and the mint
+    // counting in `__tests__/unit/storage/signedUrlCache.test.ts`.
+    await tab.auth.signOut()
+    await signIn(tab, m1)
+    expect((await tab.auth.getSession()).data.session?.user.id).toBe(m1.id)
+
+    const subjectUrl = await resolveFileUrl(ref, { client: tab, download: 'handover.txt' })
+    const res = await fetch(subjectUrl)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('the handover report')
+
+    await tab.auth.signOut()
+  }, 60_000)
 })

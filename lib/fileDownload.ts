@@ -15,6 +15,11 @@
  * outgoing mail and the person reading that mail in Gmail has no Supabase
  * session, so a signed link there would expire into a broken image in every
  * message the association has ever sent.
+ *
+ * The one rule this file does carry is about its own memo: a minted link is a
+ * bearer token for one member, so the cache is keyed to the session that minted
+ * it. `callerTag()` below says why that matters more than it sounds like it
+ * should.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { AppError } from './errorHandling'
@@ -89,7 +94,61 @@ interface CacheEntry {
 const signedUrlCache = new Map<string, CacheEntry>()
 const inFlight = new Map<string, Promise<string>>()
 
+/**
+ * A stable name for each client object we have been handed. The browser has one
+ * — the singleton in `lib/api/client.ts` — so this is effectively a constant
+ * there; a test driving several members at once has several, and two of them
+ * holding different JWTs must not share a cache slot.
+ *
+ * A WeakMap so a client that goes out of scope takes its entry with it.
+ */
+const clientTags = new WeakMap<object, string>()
+let clientSeq = 0
+
+function clientTag(client: SupabaseClient): string {
+  const existing = clientTags.get(client as unknown as object)
+  if (existing) return existing
+  const tag = `client-${++clientSeq}`
+  clientTags.set(client as unknown as object, tag)
+  return tag
+}
+
+/**
+ * Who is asking, as far as the cache is concerned.
+ *
+ * This is the whole reason the cache is safe. A signed URL is a bearer token
+ * minted for one identity, and the SPA outlives identities: `logout()` in
+ * `contexts/AuthContext.tsx` signs out without a reload, so the page, the
+ * browser-client singleton and this module's `Map` all survive into the next
+ * member's session. Keyed on bucket, path, disposition and TTL alone — as it
+ * was — the second member on a shared rink machine would hit a slot the first
+ * member filled and be handed a working link to a file storage refuses them.
+ *
+ * Two parts, because either alone has a hole. The session's user id is what
+ * changes across a same-tab logout and login. The client's identity is what
+ * separates two callers holding different JWTs on clients that keep no session
+ * at all — `createClient(..., { global: { headers: { Authorization } } })`, which
+ * is how the integration suite drives five members, and where `getSession()`
+ * truthfully answers "none".
+ *
+ * Reading the session is a local call in the normal case; it only reaches the
+ * network when the token is due for a refresh, which is a request the caller was
+ * about to make anyway.
+ */
+async function callerTag(client: SupabaseClient): Promise<string> {
+  const tag = clientTag(client)
+  try {
+    const { data } = await client.auth.getSession()
+    return `${tag}/${data?.session?.user?.id ?? 'no-session'}`
+  } catch {
+    // An unconfigured stub throws on every property access. Give it a slot of
+    // its own; the mint one line later is what reports the real problem.
+    return `${tag}/unavailable`
+  }
+}
+
 function cacheKey(
+  caller: string,
   ref: StorageObjectRef,
   download: string | boolean | undefined,
   ttlSeconds: number
@@ -97,11 +156,18 @@ function cacheKey(
   // An attachment link and a preview link are different URLs for the same
   // object, so they cannot share a cache slot. Neither can two lifetimes: a
   // caller asking for a one-second link and getting a five-minute one back is
-  // not the link it asked for.
-  return `${ref.bucket}/${ref.path}|${download === undefined ? '' : String(download)}|${ttlSeconds}`
+  // not the link it asked for. And neither can two members — see `callerTag`.
+  return `${caller}|${ref.bucket}/${ref.path}|${download === undefined ? '' : String(download)}|${ttlSeconds}`
 }
 
-/** Drop every memoised link. Tests use this; nothing in the app needs it. */
+/**
+ * Drop every memoised link.
+ *
+ * Tests use this. So does `contexts/AuthContext.tsx` on `SIGNED_OUT`: the cache
+ * is keyed to the acting session and so already refuses to serve one member's
+ * link to another, but a link nobody can use is still a link sitting in memory,
+ * and sign-out is the moment it stops being wanted.
+ */
 export function clearSignedUrlCache(): void {
   signedUrlCache.clear()
   inFlight.clear()
@@ -135,7 +201,9 @@ export async function resolveFileUrl(
   }
 
   const ttl = options.ttlSeconds ?? SIGNED_URL_TTL_SECONDS
-  const key = cacheKey(ref, options.download, ttl)
+  // Before the cache, not after: the answer depends on who is asking, so the
+  // question has to include them.
+  const key = cacheKey(await callerTag(client), ref, options.download, ttl)
 
   if (options.forceRefresh) {
     signedUrlCache.delete(key)
