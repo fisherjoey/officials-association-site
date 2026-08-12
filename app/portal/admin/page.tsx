@@ -41,7 +41,10 @@ export default function PortalAdmin() {
       description: 'Manage all public-facing website content',
       icon: IconWorld,
       links: [
-        { label: 'News Articles', href: '/portal/admin/public-content/news', icon: IconArticle },
+        // Named for what it is. The other five links here write content the
+        // public site reads at runtime; this one is a drafting surface, because
+        // /news is built from content/news/*.md. See the notice on that page.
+        { label: 'News Drafts', href: '/portal/admin/public-content/news', icon: IconArticle },
         { label: 'Training Events', href: '/portal/admin/public-content/training', icon: IconCalendarEvent },
         { label: 'Resources', href: '/portal/admin/public-content/resources', icon: IconFileDescription },
         { label: 'Officials Profiles', href: '/portal/admin/public-content/officials', icon: IconUserCheck },

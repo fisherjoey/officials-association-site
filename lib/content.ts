@@ -73,10 +73,61 @@ export function getContentBySlug(collection: string, slug: string): ContentItem 
   } as ContentItem
 }
 
-// Convert markdown content to HTML
+/**
+ * Render a markdown body to HTML.
+ *
+ * `remark-html` runs with `allowDangerousHtml` off, which is the default and
+ * which we want: raw HTML in a content file is dropped rather than emitted, so
+ * a `<script>` someone pastes into `content/news/*.md` never reaches the
+ * sanitiser in the first place. The sanitiser still runs afterwards - see the
+ * call in `app/news/[slug]/page.tsx` - because defence here is cheap and the
+ * two guards fail independently.
+ */
 export async function markdownToHtml(markdown: string): Promise<string> {
   const result = await remark().use(html).process(markdown)
   return result.toString()
+}
+
+/**
+ * The fields a news card needs, and nothing else.
+ *
+ * `/news` is a client component so it can filter by tag without a round trip,
+ * which means everything it is handed crosses into the browser bundle. Handing
+ * it `ContentItem` would ship every article body twice - once in the list
+ * payload, once in the article page that actually renders it.
+ */
+export interface NewsSummary {
+  slug: string
+  title: string
+  date: string
+  excerpt: string
+  author?: string
+  image?: string
+  tags: string[]
+  featured: boolean
+}
+
+/**
+ * Every news article the export can serve, newest first.
+ *
+ * This is the single source for both halves of `/news`: the list reads it at
+ * build time and `generateStaticParams` walks the same directory, so a slug in
+ * the list is a slug with a page. That agreement is the point: a static export
+ * has no way to serve an article it did not write to disk, so anything the list
+ * can offer has to come from here. See the news entry under "Documented
+ * assumptions" in the README.
+ */
+export function getNewsSummaries(): NewsSummary[] {
+  return sortByDate(getAllContent('news')).map((item) => ({
+    slug: item.slug,
+    title: item.title ?? item.slug,
+    date: item.date ?? '',
+    excerpt: item.excerpt ?? '',
+    author: item.author || undefined,
+    image: item.image || undefined,
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    featured: item.featured === true,
+  }))
 }
 
 // Get site settings
@@ -121,8 +172,9 @@ export function filterByTag(items: ContentItem[], tag: string): ContentItem[] {
   })
 }
 
-// Get all unique tags from content items
-export function getAllTags(items: ContentItem[]): string[] {
+// Get all unique tags from content items. Takes the widest shape that can
+// answer the question so it works on `NewsSummary` as well as `ContentItem`.
+export function getAllTags(items: Array<{ tags?: unknown }>): string[] {
   const tags = new Set<string>()
   items.forEach(item => {
     if (item.tags && Array.isArray(item.tags)) {
