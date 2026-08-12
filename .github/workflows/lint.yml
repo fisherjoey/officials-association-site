@@ -1,0 +1,24 @@
+name: Lint
+
+# eslint.config.mjs is the only thing standing between this repo and a
+# `lint` script that passes by checking nothing (see PLAT-4 / README "Known
+# gaps"). Keep this job green by fixing what it finds, not by loosening it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint

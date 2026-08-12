@@ -382,7 +382,7 @@ export default function EvaluationsPage() {
             <IconClipboardCheck className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" />
             <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No evaluations created yet</h3>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Click "Add Evaluation" to create your first evaluation.
+              Click &quot;Add Evaluation&quot; to create your first evaluation.
             </p>
           </div>
         ) : (
@@ -602,7 +602,7 @@ export default function EvaluationsPage() {
                   onChange={(e) => setSelectedActivityId(e.target.value)}
                   className="w-full pl-3 pr-8 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-portal-surface text-gray-900 dark:text-white rounded-lg focus:ring-2 focus:ring-orange-500"
                 >
-                  <option value="">Don't link to activity</option>
+                  <option value="">Don&apos;t link to activity</option>
                   {memberActivities.map((activity) => (
                     <option key={activity.id} value={activity.id}>
                       {activity.activity_type} - {formatDate(activity.activity_date)}

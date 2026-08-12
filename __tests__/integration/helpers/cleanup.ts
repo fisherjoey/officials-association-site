@@ -19,7 +19,6 @@ async function deleteByLike(
   const sb = getSupabaseAdmin()
   const { error } = await sb.from(table).delete().like(column, pattern)
   if (error) {
-    // eslint-disable-next-line no-console
     console.warn(`cleanup ${table}.${column} failed:`, error.message)
   }
 }
@@ -64,7 +63,6 @@ export const cleanupMembersRows = async (): Promise<void> => {
     .delete()
     .like('email', `${E2E_TAG.toLowerCase()}-%@example.test`)
   if (error) {
-    // eslint-disable-next-line no-console
     console.warn('cleanup members.email failed:', error.message)
   }
 }
@@ -77,7 +75,6 @@ export const cleanupEvaluationsRows = async (): Promise<void> => {
   // Title-based cleanup (preferred — most tests should tag the title).
   const { error: titleErr } = await sb.from('evaluations').delete().like('title', PATTERN)
   if (titleErr) {
-    // eslint-disable-next-line no-console
     console.warn('cleanup evaluations.title failed:', titleErr.message)
   }
 }

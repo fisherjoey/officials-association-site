@@ -660,7 +660,7 @@ export default function MembersPage() {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
-          <p className="text-gray-600 dark:text-gray-400">You don't have permission to access this page.</p>
+          <p className="text-gray-600 dark:text-gray-400">You don&apos;t have permission to access this page.</p>
         </div>
       </div>
     )
@@ -1521,7 +1521,7 @@ export default function MembersPage() {
           {!resendPendingResults ? (
             <>
               <p className="text-gray-600 dark:text-gray-400">
-                This will resend invite emails to all members who haven't signed in yet. Their previous invite links will be invalidated and new ones will be sent.
+                This will resend invite emails to all members who haven&apos;t signed in yet. Their previous invite links will be invalidated and new ones will be sent.
               </p>
 
               <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4">

@@ -100,7 +100,6 @@ export function takeReply(
 // ---------------------------------------------------------------------------
 
 function needsEncoding(value: string): boolean {
-  // eslint-disable-next-line no-control-regex
   return /[^\x20-\x7e]/.test(value)
 }
 

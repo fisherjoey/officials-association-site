@@ -4,7 +4,6 @@ import { buildJoditConfig } from '@/components/joditConfig'
 // the bundler uses is not transformed for jest, and this carries the same
 // source and the same defaults - which is the point, because the defaults are
 // what this file is checking we override.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Jodit } = require('jodit/es2021/jodit.min.js')
 
 jest.setTimeout(30000)

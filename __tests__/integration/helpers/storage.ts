@@ -68,7 +68,6 @@ export async function cleanupUploadBuckets(): Promise<void> {
       search: E2E_TAG,
     })
     if (error) {
-      // eslint-disable-next-line no-console
       console.warn(`storage list ${bucket} failed:`, error.message)
       continue
     }
@@ -78,7 +77,6 @@ export async function cleanupUploadBuckets(): Promise<void> {
     if (stale.length === 0) continue
     const { error: rmError } = await sb.storage.from(bucket).remove(stale)
     if (rmError) {
-      // eslint-disable-next-line no-console
       console.warn(`storage remove ${bucket} failed:`, rmError.message)
     }
   }
@@ -93,7 +91,6 @@ export async function removeUploaded(
   const sb = getSupabaseAdmin()
   const { error } = await sb.storage.from(bucket).remove([path])
   if (error) {
-    // eslint-disable-next-line no-console
     console.warn(`storage remove ${bucket}/${path} failed:`, error.message)
   }
 }

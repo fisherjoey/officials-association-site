@@ -60,6 +60,13 @@ export default function RootLayout({
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/*
+          no-page-custom-font assumes the Pages Router, where a font <link>
+          outside pages/_document.js only loads on one page. This is the App
+          Router root layout — every route renders through it, so the rule's
+          premise doesn't hold here.
+        */}
+        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
         <link rel="apple-touch-icon" sizes="180x180" href={FAVICONS.appleTouch} />
         <link rel="icon" type="image/png" sizes="32x32" href={FAVICONS.png32} />

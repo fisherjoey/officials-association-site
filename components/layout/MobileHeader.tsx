@@ -26,11 +26,6 @@ export default function MobileHeader() {
   
   // Check if we're on portal pages - don't show main header on portal
   const isPortalPage = pathname?.startsWith('/portal')
-  
-  // Don't render main header on portal pages
-  if (isPortalPage) {
-    return null
-  }
 
   // Close menu when route changes
   useEffect(() => {
@@ -50,6 +45,12 @@ export default function MobileHeader() {
       document.body.style.overflow = 'unset'
     }
   }, [mobileMenuOpen])
+
+  // Don't render main header on portal pages — after the hooks above, so
+  // hook call order stays identical across renders regardless of route.
+  if (isPortalPage) {
+    return null
+  }
 
   const navLinks = [
     { href: '/', label: 'Home', icon: IconHome },

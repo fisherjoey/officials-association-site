@@ -707,10 +707,10 @@ or the page needs `markdownToHtml()` from `lib/content.ts` wired into it.
 
 **Four npm scripts point at files that do not exist**: `dev:functions`
 (`server/local-functions.js`, where the file on disk is `.ts`), `dev:cms` (Decap CMS was
-removed and there is no `public/admin`), `test:supabase` and `test:buckets`. `decap-cms-app`
-is still in `dependencies` and nothing imports it. All five are safe to delete on the day you
-fork: no code path calls them, and dropping `decap-cms-app` takes a large unused package out
-of your install.
+removed and there is no `public/admin`), `test:supabase` and `test:buckets`. All four are
+safe to delete on the day you fork: no code path calls them. `decap-cms-app` itself, the
+large unused package `dev:cms` pointed at, is already gone from `dependencies` (see
+[Known gaps](#known-gaps)).
 
 **Mail addresses are derived, and derivable.** Setting `NEXT_PUBLIC_EMAIL_DOMAIN` moves all
 eleven role mailboxes at once, and each one is `<role>@<your domain>`. The domain is public

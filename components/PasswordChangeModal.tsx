@@ -83,7 +83,7 @@ export default function PasswordChangeModal({ isOpen, onClose, onSuccess, userEm
 
           <div className="bg-blue-900/30 border border-blue-800 rounded-lg p-4 mb-6">
             <p className="text-sm text-blue-400">
-              We've upgraded our member portal. Please set a new password to continue using your account.
+              We&apos;ve upgraded our member portal. Please set a new password to continue using your account.
             </p>
           </div>
 
