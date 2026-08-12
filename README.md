@@ -331,12 +331,12 @@ Other scripts:
 
 | Command | Does |
 |---|---|
-| `npm test` | Unit tests. 356 across 23 suites, no external services. |
+| `npm test` | Unit tests. 386 across 24 suites, no external services. |
 | `npm run test:integration` | Integration tests against a real Supabase project. Needs `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Creates and cleans up tagged rows and a couple of throwaway auth users. |
 | `node scripts/check-exported-links.mjs` | Run after a build. Reads every local `href` out of `out/` and fails on any that resolves to nothing. |
 | `npm run build` | The production static export, into `out/`. |
 | `npx tsc --noEmit` | Type check. |
-| `npm run lint` | ESLint, via `eslint.config.mjs` (`next/core-web-vitals`). Also runs as part of `npm run build`, since `next.config.js` sets `eslint.ignoreDuringBuilds: false`. |
+| `npm run lint` | ESLint, via `eslint.config.mjs` (`next/core-web-vitals`). Also runs as part of `npm run build`, since `next.config.ts` sets `eslint.ignoreDuringBuilds: false`. |
 
 ---
 
